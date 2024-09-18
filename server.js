@@ -4,7 +4,7 @@ const morgan = require("morgan");
 const cors = require("cors");
 require("dotenv").config();
 const connectDB = require("./config/db");
-// const indexRouter = require('./routes/index');
+const indexRouter = require('./routes/index');
 
 const app = express();
 const port = process.env.PORT || 8080;
@@ -18,7 +18,8 @@ app.use(express.json());
 app.use(cors(corsOptions));
 app.use(morgan("dev"));
 
-
+// ROUTES MIDDLEWARE
+app.use('/', indexRouter);
 
 // CONNECT TO DB
 connectDB();

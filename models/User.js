@@ -8,7 +8,7 @@ const userSchema = new Schema({
 		required: [true, "Username is a Required field"],
 		minLength: 3,
 		maxLength: 20,
-		lowercase: true,
+		// lowercase: true,
 		unique: true
 	},
 	email: {
