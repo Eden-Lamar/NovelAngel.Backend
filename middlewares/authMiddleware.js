@@ -1,7 +1,8 @@
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
+const User = require("../models/User");
 
-const protect = (req, res, next) => {
+const protect = async (req, res, next) => {
 	const token = req.header("Authorization")?.split(" ")[1];
 
 	if (!token) {
@@ -13,7 +14,13 @@ const protect = (req, res, next) => {
 
 	try {
 		const userId = jwt.verify(token, process.env.JWT_SECRET);
-		req.user = userId; // Save the decoded user data to the request object
+		// Attach user to request object
+		req.user = await User.findById(userId.id).select("-password");
+
+		if (!req.user) {
+			return res.status(404).json({ status: "fail", error: "User not found" });
+		}
+
 		next();
 	} catch (error) {
 		if (error.name === "TokenExpiredError") {
@@ -35,4 +42,17 @@ const protect = (req, res, next) => {
 	}
 };
 
-module.exports = { protect };
+// Middleware to verify admin role
+const admin = (req, res, next) => {
+	try {
+		if (req.user && req.user.role === "admin") {
+			next();
+		} else {
+			res.status(403).json({ status: "fail", error: "Access denied. Admin access required." });
+		}
+	} catch (error) {
+		res.status(500).json({ status: "fail", error: "Authorization error" });
+	}
+};
+
+module.exports = { protect, admin };

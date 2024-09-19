@@ -113,7 +113,8 @@ const loginUser = async (req, res) => {
 const getProfile = async (req, res) => {
 	try {
 		// Find the user by id
-		const user = await User.findById(req.user.id).select("-password"); // Exclude the password from the returned data
+		console.log(req.user);
+		const user = await User.findById(req.user._id).select("-password"); // Exclude the password from the returned data
 
 		if (!user) {
 			return res.status(404).json({

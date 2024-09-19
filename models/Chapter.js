@@ -1,8 +1,12 @@
+const mongoose = require('mongoose');
+const { Schema } = mongoose;
+
 const chapterSchema = new Schema({
 	title: {
 		type: String,
 		required: [true, "title is a Required field"],
 		trim: true,
+		lowercase: true,
 		minLength: 6,
 		maxLength: 80,
 	},
@@ -10,13 +14,17 @@ const chapterSchema = new Schema({
 	content: {
 		type: String,
 		trim: true,
-		required: true
+		required: [true, "content is a Required field"]
 	},
 
 	book: {
 		type: Schema.Types.ObjectId,
 		ref: 'Book',
-		required: true
+		required: [true, "book id is a Required field"]
+	},
+	chapterNo: {
+		type: Number,
+		required: [true, "chapterNo is a Required field"]
 	},
 
 	isLocked: {

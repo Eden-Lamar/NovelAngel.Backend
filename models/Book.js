@@ -1,8 +1,12 @@
+const mongoose = require('mongoose');
+const { Schema } = mongoose;
+
 const bookSchema = new Schema({
 	title: {
 		type: String,
 		required: [true, "title is a Required field"],
 		trim: true,
+		lowercase: true,
 		minLength: 6,
 		maxLength: 80,
 	},
@@ -11,6 +15,7 @@ const bookSchema = new Schema({
 		type: String,
 		trim: true,
 		required: [true, "Username is a Required field"],
+		// lowercase: true,
 		minLength: 3,
 		maxLength: 50,
 	},
@@ -19,6 +24,7 @@ const bookSchema = new Schema({
 		type: String,
 		required: [true, "description is a Required field"],
 		trim: true,
+		lowercase: true,
 		minLength: 20,
 		maxLength: 200,
 	},
@@ -27,15 +33,14 @@ const bookSchema = new Schema({
 		type: String,
 		enum: ['Translation', 'Original stories', 'Fanfiction'],
 		default: 'Translation', // Default value for category
-		required: [true, "category is a Required field"]
+		// required: [true, "category is a Required field"]
 	},
 
 	tags: [{
-		type: String,
-		enum: ['Revenge', 'Romance', 'CEO', 'System', 'Female protagonist',
-			'Male protagonist', 'Ancient China', 'Slow burn', 'Action',
-			'Adventure', 'Thriller', 'Horror', 'Comedy', 'Sci-fi'],
-		default: ['Romance', 'Female protagonist'] // Default tags
+		type: [String],
+		trim: true,
+		default: undefined,
+		required: [true, "tags is a Required field"]
 	}],
 
 	chapters: [{
