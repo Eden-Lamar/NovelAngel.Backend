@@ -23,4 +23,7 @@ const commentSchema = new Schema({
 
 }, { timestamps: true });
 
+// Optional: Index for faster queries
+commentSchema.index({ user: 1, book: 1 });
+
 module.exports = mongoose.model('Comment', commentSchema);

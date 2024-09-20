@@ -16,4 +16,7 @@ const bookmarkSchema = new Schema({
 
 }, { timestamps: true });
 
+// Prevent duplicate bookmarks
+bookmarkSchema.index({ user: 1, book: 1 }, { unique: true });
+
 module.exports = mongoose.model('Bookmark', bookmarkSchema);

@@ -65,6 +65,11 @@ const bookSchema = new Schema({
 		ref: 'User'
 	}, // Admin who uploaded the book
 
+	likeCount: { // New field to track likes
+		type: Number,
+		default: 0
+	}
+
 }, { timestamps: true });
 
 module.exports = mongoose.model('Book', bookSchema);
