@@ -9,9 +9,9 @@ const commentSchema = new Schema({
 		required: true
 	},
 
-	chapter: {
+	book: {
 		type: Schema.Types.ObjectId,
-		ref: 'Chapter',
+		ref: 'Book',
 		required: true
 	},
 

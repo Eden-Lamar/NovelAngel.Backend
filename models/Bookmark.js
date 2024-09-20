@@ -11,7 +11,7 @@ const bookmarkSchema = new Schema({
 	book: {
 		type: Schema.Types.ObjectId,
 		ref: 'Book',
-		required: true
+		required: [true, "book is a require field"]
 	},
 
 }, { timestamps: true });

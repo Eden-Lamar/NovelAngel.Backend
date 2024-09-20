@@ -8,10 +8,10 @@ const likeSchema = new Schema({
 		required: true
 	},
 
-	chapter: {
+	book: {
 		type: Schema.Types.ObjectId,
-		ref: 'Chapter',
-		required: true
+		ref: 'Book',
+		required: [true, "book is a require field"]
 	},
 
 }, { timestamps: true });
