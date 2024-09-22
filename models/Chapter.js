@@ -32,15 +32,15 @@ const chapterSchema = new Schema({
 		default: false
 	}, // Free or locked chapter
 
-	likes: [{
-		type: Schema.Types.ObjectId,
-		ref: 'Like'
-	}],
+	// likes: [{
+	// 	type: Schema.Types.ObjectId,
+	// 	ref: 'Like'
+	// }],
 
-	comments: [{
-		type: Schema.Types.ObjectId,
-		ref: 'Comment'
-	}],
+	// comments: [{
+	// 	type: Schema.Types.ObjectId,
+	// 	ref: 'Comment'
+	// }],
 
 	uploadedBy: {
 		type: Schema.Types.ObjectId,
