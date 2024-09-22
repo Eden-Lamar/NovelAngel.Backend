@@ -8,14 +8,12 @@ const addBook = async (req, res) => {
 	const { title, author, description, category, tags, status } = req.body;
 
 	try {
-		let tagsArray = [];
-		if (tags && Array.isArray(tags) && tags.length > 0) {
-			tagsArray = tags; // Use provided tags if they are in the correct format
-		} else {
+		// Validate tags
+		if (!tags || !Array.isArray(tags) || tags.length === 0) {
 			return res.status(400).json({
 				status: "fail",
-				error: "tags can not be empty"
-			})
+				error: "tags must be a non-empty array"
+			});
 		}
 
 		const newBook = await Book.create({
@@ -23,11 +21,12 @@ const addBook = async (req, res) => {
 			author,
 			description,
 			category,
-			tags: tagsArray,
+			tags,
 			status,
 			uploadedBy: req.user._id,
 		});
 
+		console.log(newBook.tags);
 
 		res.status(201).json({
 			status: "success",
@@ -65,11 +64,15 @@ const updateBook = async (req, res) => {
 		book.category = category || book.category;
 		book.status = status || book.status;
 
-		// If new tags are provided, update the tags field
-		if (tags && Array.isArray(tags)) {
-			// Ensure tags are added individually to avoid nested arrays
-			book.tags = [];
-			book.tags = book.tags.concat(tags);
+		// Update tags if provided
+		if (tags) {
+			if (!Array.isArray(tags) || tags.length === 0) {
+				return res.status(400).json({
+					status: "fail",
+					error: "tags must be a non-empty array"
+				});
+			}
+			book.tags = tags; // Directly assign the new tags array
 		}
 
 		const updatedBook = await book.save();
