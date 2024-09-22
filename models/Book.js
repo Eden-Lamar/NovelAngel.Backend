@@ -14,7 +14,7 @@ const bookSchema = new Schema({
 	author: {
 		type: String,
 		trim: true,
-		required: [true, "Username is a Required field"],
+		required: [true, "Author is a Required field"],
 		// lowercase: true,
 		minLength: 3,
 		maxLength: 50,
@@ -36,12 +36,12 @@ const bookSchema = new Schema({
 		// required: [true, "category is a Required field"]
 	},
 
-	tags: [{
+	tags: {
 		type: [String],
 		trim: true,
 		default: undefined,
 		required: [true, "tags is a Required field"]
-	}],
+	},
 
 	chapters: [{
 		type: Schema.Types.ObjectId,
@@ -62,7 +62,8 @@ const bookSchema = new Schema({
 
 	uploadedBy: {
 		type: Schema.Types.ObjectId,
-		ref: 'User'
+		ref: 'User',
+		required: [true, "Uploaded By is a required field"],
 	}, // Admin who uploaded the book
 
 	likeCount: { // New field to track likes
@@ -71,5 +72,12 @@ const bookSchema = new Schema({
 	}
 
 }, { timestamps: true });
+
+// Create a text index on title and author for efficient text search
+bookSchema.index({ title: 'text', author: 'text' });
+
+// Create indexes on category and tags for efficient filtering
+bookSchema.index({ category: 1 });
+bookSchema.index({ tags: 1 });
 
 module.exports = mongoose.model('Book', bookSchema);
