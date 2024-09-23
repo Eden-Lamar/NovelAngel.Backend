@@ -1,6 +1,7 @@
 // Import the Book model
 const Book = require('../models/Book');
 const Chapter = require('../models/Chapter');
+const { calculateTimeAgo } = require("../utils/helpFunction")
 
 
 // @description: Search and filter books based on query parameters
@@ -154,7 +155,6 @@ const getChapterById = async (req, res) => {
 			data: chapter
 		});
 	} catch (error) {
-		console.error('Get Chapter By ID Error:', error);
 		res.status(500).json({
 			status: 'fail',
 			message: error.message
@@ -162,5 +162,84 @@ const getChapterById = async (req, res) => {
 	}
 };
 
+// @description: Get the 10 newest books added to the platform
+// @route GET /api/v1/books/new
+// @access public
 
-module.exports = { searchBooks, getBookById, getChapterById };
+const getNewBooks = async (req, res) => {
+	try {
+		// 1. Fetch the 10 newest books, sorted by creation date in descending order
+		const books = await Book.find()
+			.sort({ createdAt: -1 }) // Sort by createdAt field in descending order
+			.limit(10); // Limit to 10 books
+
+		// 2. Send the response with the retrieved books
+		res.status(200).json({
+			status: 'success',
+			results: books.length, // Number of books returned
+			data: books, // Array of book objects
+		});
+	} catch (error) {
+		res.status(500).json({
+			status: 'fail',
+			message: error.message
+		});
+	}
+};
+
+// @description: Get latest updated books (with the most recent chapters added)
+// @route GET /api/v1/books/latest-updates
+// @access public
+const getLatestUpdatedBooks = async (req, res) => {
+	try {
+		// 1. Find books with at least one chapter, whether ongoing or completed
+		const books = await Book.find({
+			chapters: { $exists: true, $ne: [] }, // Ensure books have chapters
+			status: { $in: ['ongoing', 'completed'] } // Filter for ongoing or completed books
+		})
+			.populate({
+				path: 'chapters',
+				options: { sort: { updatedAt: -1 }, limit: 1 } // Get only the latest chapter for each book
+			})
+			.sort({ 'chapters.updatedAt': -1 }) // Sort by the most recently updated chapter
+			.limit(10); // Limit to 10 books
+
+		// 2. Format the response with the latest chapter number and time ago
+		const latestBooks = books.map(book => {
+			const latestChapter = book.chapters[0]; // The latest chapter
+
+			// Check if the book has a latest chapter before trying to access its properties
+			if (!latestChapter) {
+				return null; // Skip books with no chapters
+			}
+
+			const timeAgo = calculateTimeAgo(latestChapter.updatedAt); // Calculate how long ago the chapter was added
+
+			return {
+				bookId: book._id,
+				title: book.title,
+				author: book.author,
+				category: book.category,
+				status: book.status,
+				latestChapter: {
+					chapterNo: latestChapter.chapterNo,
+					updatedAt: timeAgo, // Time ago (e.g., "2 days ago")
+				},
+			};
+		}).filter(book => book !== null); // Filter out null values (books with no chapters)
+
+		// 3. Send the response with the formatted data
+		res.status(200).json({
+			status: 'success',
+			result: latestBooks.length,
+			data: latestBooks
+		});
+	} catch (error) {
+		res.status(500).json({
+			status: 'fail',
+			message: error.message
+		});
+	}
+};
+
+module.exports = { searchBooks, getBookById, getChapterById, getNewBooks, getLatestUpdatedBooks };

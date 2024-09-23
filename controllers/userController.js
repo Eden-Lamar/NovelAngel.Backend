@@ -1,8 +1,8 @@
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Bookmark = require('../models/Bookmark');
 const { registerValidation, loginValidation } = require("../utils/validate");
-
+const { generateToken } = require("../utils/helpFunction")
 
 // @description: Register Users 
 // @route POST /api/v1/user/register
@@ -172,14 +172,63 @@ const updateProfile = async (req, res) => {
 
 };
 
-// Generate JWT token
-const generateToken = (id) => {
-	return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+// @description: Get the list of bookmarked books by the logged-in user
+// @route GET /api/v1/user/bookmarks
+// @access Private
+const getUserBookmarks = async (req, res) => {
+	try {
+		// Get the logged-in user's ID from the request
+		const userId = req.user.id;
+
+		// Extract query parameters for pagination (default to page 1 and limit 10)
+		const { page = 1, limit = 10 } = req.query;
+
+		// Convert to integers
+		const pageNumber = parseInt(page, 10);
+		const limitNumber = parseInt(limit, 10);
+
+		// Calculate the number of documents to skip
+		const skip = (pageNumber - 1) * limitNumber;
+
+		// Fetch the bookmarks for the user, and populate the book details
+		const bookmarksPromise = await Bookmark.find({ user: userId })
+			.populate('book', 'title author createdAt -_id') // Populate book title, author, and creation date
+			.skip(skip)
+			.limit(limitNumber)
+			.exec();
+
+		// Get the total count of bookmarks for pagination metadata
+		const countPromise = Bookmark.countDocuments({ user: userId });
+
+		// Resolve both promises in parallel
+		const [bookmarks, total] = await Promise.all([bookmarksPromise, countPromise]);
+
+		// Calculate total pages
+		const totalPages = Math.ceil(total / limitNumber);
+
+		// Send the response with the list of bookmarked books
+		res.status(200).json({
+			status: 'success',
+			results: bookmarks.length,
+			data: bookmarks.map(bookmark => bookmark.book), // Return only the book details
+			pagination: {
+				total, // Total number of bookmarks
+				currentPage: pageNumber, // Current page number
+				totalPages // Total number of pages
+			}
+		});
+	} catch (error) {
+		res.status(500).json({
+			status: 'fail',
+			message: error.message
+		});
+	}
 };
 
 module.exports = {
 	registerUser,
 	loginUser,
 	getProfile,
-	updateProfile
+	updateProfile,
+	getUserBookmarks
 };
