@@ -42,6 +42,30 @@ const protect = async (req, res, next) => {
 	}
 };
 
+// Middleware to optionally authenticate users
+const optionalAuthMiddleware = async (req, res, next) => {
+	const authHeader = req.headers.authorization;
+
+	if (authHeader && authHeader.startsWith('Bearer ')) {
+		const token = authHeader.split(' ')[1];
+
+		try {
+			const decoded = jwt.verify(token, process.env.JWT_SECRET);
+			const user = await User.findById(decoded.id).select('-password'); // Exclude password from user object
+
+			if (user) {
+				req.user = user; // Attach user object to request
+			}
+		} catch (error) {
+			console.error('Error verifying token:', error);
+			// Token is invalid, but we'll allow the request to continue as a guest
+		}
+	}
+	// Proceed to next middleware regardless of authentication
+	next();
+};
+
+
 // Middleware to verify admin role
 const admin = (req, res, next) => {
 	try {
@@ -55,4 +79,4 @@ const admin = (req, res, next) => {
 	}
 };
 
-module.exports = { protect, admin };
+module.exports = { protect, optionalAuthMiddleware,admin };

@@ -1,6 +1,7 @@
 // Import the Book model
 const Book = require('../models/Book');
 const Chapter = require('../models/Chapter');
+const User = require('../models/User');
 const { calculateTimeAgo } = require("../utils/helpFunction")
 
 
@@ -130,7 +131,7 @@ const getBookById = async (req, res) => {
 const getChapterById = async (req, res) => {
 	try {
 		const { bookId, chapterId } = req.params;
-
+		const userId = req.user ? req.user._id : null; // Only available for logged-in users
 		// Verify that the book exists
 		const book = await Book.findById(bookId);
 		if (!book) {
@@ -141,7 +142,7 @@ const getChapterById = async (req, res) => {
 		}
 
 		// Find the specific chapter within the book
-		const chapter = await Chapter.findOne({ _id: chapterId, book: bookId });
+		const chapter = await Chapter.findById(chapterId).where({ book: bookId });
 
 		if (!chapter) {
 			return res.status(404).json({
@@ -150,10 +151,46 @@ const getChapterById = async (req, res) => {
 			});
 		}
 
+		// Increment views only if the user is registered and hasn't viewed the book yet
+		if (userId && !book.viewedBy.includes(userId)) {
+			book.views += 1; // Increment the view count
+			book.viewedBy.push(userId); // Mark the user as having viewed the book
+			await book.save(); // Save the updated book
+		}
+
+		// Track reading history for logged-in users
+		if (userId) {
+			const user = await User.findById(userId);
+
+			// Check if the book is already in the user's reading history
+			const existingHistory = user.readingHistory.find(
+				(history) => history.bookId.toString() === bookId
+			);
+
+			if (existingHistory) {
+				// If the book is already in history, update the last chapter and timestamp
+				existingHistory.lastChapterRead = chapterId;
+				existingHistory.updatedAt = Date.now();
+			} else {
+				// If not, add a new entry for the book in reading history
+				user.readingHistory.push({
+					bookId,
+					lastChapterRead: chapterId,
+					updatedAt: Date.now(),
+				});
+			}
+
+			await user.save(); // Save the updated user with new reading history
+		}
+
 		res.status(200).json({
 			status: 'success',
-			data: chapter
+			data: {
+				bookTitle: book.title,
+				chapter,
+			},
 		});
+
 	} catch (error) {
 		res.status(500).json({
 			status: 'fail',
@@ -242,4 +279,85 @@ const getLatestUpdatedBooks = async (req, res) => {
 	}
 };
 
-module.exports = { searchBooks, getBookById, getChapterById, getNewBooks, getLatestUpdatedBooks };
+// @description: Get the top 10 trending books
+// @route GET /api/v1/books/trending
+// @access public
+const getTrendingBooks = async (req, res) => {
+	try {
+		const timeFrame = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+		const now = new Date();
+		const weekAgo = new Date(now - timeFrame);
+
+		const trendingBooks = await Book.aggregate([
+			// Match books updated within the last week
+			{
+				$match: {
+					updatedAt: { $gte: weekAgo }
+				}
+			},
+			// Lookup to get the count of chapters
+			{
+				$lookup: {
+					from: 'chapters',
+					localField: 'chapters',
+					foreignField: '_id',
+					as: 'chaptersData'
+				}
+			},
+			// Calculate a trending score
+			{
+				$addFields: {
+					trendingScore: {
+						$add: [
+							{ $multiply: ['$views', 1] },  // Weight for views
+							{ $multiply: ['$likeCount', 2] },  // Weight for likes
+							{ $multiply: [{ $size: '$chaptersData' }, 5] }  // Weight for number of chapters
+						]
+					}
+				}
+			},
+			// Filter out books with null trending score
+			{
+				$match: {
+					trendingScore: { $ne: null }
+				}
+			},
+			// Sort by trending score
+			{
+				$sort: { trendingScore: -1 }
+			},
+			// Limit to top 10
+			{
+				$limit: 10
+			},
+			// Project only necessary fields
+			{
+				$project: {
+					title: 1,
+					author: 1,
+					category: 1,
+					tags: 1,
+					status: 1,
+					views: 1,
+					likeCount: 1,
+					chapterCount: { $size: '$chaptersData' },
+					trendingScore: 1
+				}
+			}
+		]);
+
+		res.status(200).json({
+			status: 'success',
+			results: trendingBooks.length,
+			data: trendingBooks
+		});
+	} catch (error) {
+		console.error('Error in getTrendingBooks:', error);
+		res.status(500).json({
+			status: 'fail',
+			message: 'Server Error'
+		});
+	}
+};
+
+module.exports = { searchBooks, getBookById, getChapterById, getNewBooks, getLatestUpdatedBooks, getTrendingBooks };

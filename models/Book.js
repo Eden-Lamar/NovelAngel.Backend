@@ -69,7 +69,17 @@ const bookSchema = new Schema({
 	likeCount: { // New field to track likes
 		type: Number,
 		default: 0
-	}
+	},
+
+	views: {
+		type: Number,
+		default: 0,
+	},
+
+	viewedBy: [{
+		type: mongoose.Schema.Types.ObjectId,
+		ref: 'User',
+	}],
 
 }, { timestamps: true });
 
@@ -79,5 +89,8 @@ bookSchema.index({ title: 'text', author: 'text' });
 // Create indexes on category and tags for efficient filtering
 bookSchema.index({ category: 1 });
 bookSchema.index({ tags: 1 });
+
+// New index for the trending books query
+bookSchema.index({ updatedAt: -1, views: -1, likeCount: -1 });
 
 module.exports = mongoose.model('Book', bookSchema);

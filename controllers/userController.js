@@ -225,10 +225,45 @@ const getUserBookmarks = async (req, res) => {
 	}
 };
 
+// @description: Get a user's reading history
+// @route GET /api/v1/user/history
+// @access private
+const getReadingHistory = async (req, res) => {
+	try {
+		const userId = req.user.id;
+
+		// Find the user and populate the readingHistory field with book and chapter details
+		const user = await User.findById(userId)
+			.populate('readingHistory.bookId', 'title author')
+			.populate('readingHistory.lastChapterRead', 'chapterNo title');
+
+		if (!user) {
+			return res.status(404).json({
+				status: 'fail',
+				message: 'User not found'
+			});
+		}
+
+		res.status(200).json({
+			status: 'success',
+			results: user.readingHistory.length,
+			data: user.readingHistory
+		});
+	} catch (error) {
+		res.status(500).json({
+			status: 'fail',
+			message: error.message
+		});
+	}
+};
+
+
+
 module.exports = {
 	registerUser,
 	loginUser,
 	getProfile,
 	updateProfile,
-	getUserBookmarks
+	getUserBookmarks,
+	getReadingHistory
 };

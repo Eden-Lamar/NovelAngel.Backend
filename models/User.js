@@ -44,6 +44,11 @@ const userSchema = new Schema({
 		type: Schema.Types.ObjectId,
 		ref: 'Comment'
 	}],
+	readingHistory: [{
+		bookId: { type: mongoose.Schema.Types.ObjectId, ref: 'Book' },
+		lastChapterRead: { type: mongoose.Schema.Types.ObjectId, ref: 'Chapter' },
+		updatedAt: { type: Date, default: Date.now }
+	}]
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);
