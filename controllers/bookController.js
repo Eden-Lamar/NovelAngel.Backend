@@ -3,6 +3,7 @@ const Book = require('../models/Book');
 const Chapter = require('../models/Chapter');
 const User = require('../models/User');
 const { calculateTimeAgo } = require("../utils/helpFunction")
+const { getRecommendedBooks } = require("../utils/bookRecommendations")
 
 
 // @description: Search and filter books based on query parameters
@@ -132,6 +133,7 @@ const getChapterById = async (req, res) => {
 	try {
 		const { bookId, chapterId } = req.params;
 		const userId = req.user ? req.user._id : null; // Only available for logged-in users
+
 		// Verify that the book exists
 		const book = await Book.findById(bookId);
 		if (!book) {
@@ -162,22 +164,25 @@ const getChapterById = async (req, res) => {
 		if (userId) {
 			const user = await User.findById(userId);
 
-			// Check if the book is already in the user's reading history
-			const existingHistory = user.readingHistory.find(
-				(history) => history.bookId.toString() === bookId
+			// Check if the chapter is already in the user's reading history
+			const existingIndex = user.readingHistory.findIndex(
+				(history) => history.lastChapterRead.toString() === chapterId
 			);
 
-			if (existingHistory) {
-				// If the book is already in history, update the last chapter and timestamp
-				existingHistory.lastChapterRead = chapterId;
-				existingHistory.updatedAt = Date.now();
-			} else {
-				// If not, add a new entry for the book in reading history
-				user.readingHistory.push({
-					bookId,
-					lastChapterRead: chapterId,
-					updatedAt: Date.now(),
-				});
+			if (existingIndex !== -1) {
+				// Remove the chapter from its current position
+				user.readingHistory.splice(existingIndex, 1);
+			}
+
+			// add a new entry for the book in reading history
+			user.readingHistory.unshift({
+				book: bookId,
+				lastChapterRead: chapterId,
+			});
+
+			// Limit the readingHistory to 10 items
+			if (user.readingHistory.length > 10) {
+				user.readingHistory.pop(); // Remove the last item (oldest)
 			}
 
 			await user.save(); // Save the updated user with new reading history
@@ -360,4 +365,28 @@ const getTrendingBooks = async (req, res) => {
 	}
 };
 
-module.exports = { searchBooks, getBookById, getChapterById, getNewBooks, getLatestUpdatedBooks, getTrendingBooks };
+// @description: Get random book recommendations
+// @route GET /api/v1/books/recommendations
+// @access public
+const getBookRecommendations = async (req, res) => {
+	try {
+		const userId = req.user ? req.user._id : null; // Only available for logged-in users
+		console.log(userId);
+		const recommendedBooks = await getRecommendedBooks(userId);
+
+
+		res.status(200).json({
+			status: 'success',
+			results: recommendedBooks.length,
+			data: recommendedBooks
+		});
+	} catch (error) {
+		res.status(500).json({
+			status: 'fail',
+			message: error.message
+		});
+	}
+};
+
+
+module.exports = { searchBooks, getBookById, getChapterById, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations };

@@ -55,6 +55,11 @@ const optionalAuthMiddleware = async (req, res, next) => {
 
 			if (user) {
 				req.user = user; // Attach user object to request
+			} else {
+				return res.status(404).json({
+					status: 'fail',
+					message: 'User not found'
+				});
 			}
 		} catch (error) {
 			console.error('Error verifying token:', error);
@@ -79,4 +84,4 @@ const admin = (req, res, next) => {
 	}
 };
 
-module.exports = { protect, optionalAuthMiddleware,admin };
+module.exports = { protect, optionalAuthMiddleware, admin };

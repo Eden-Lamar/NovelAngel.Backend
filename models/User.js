@@ -45,10 +45,14 @@ const userSchema = new Schema({
 		ref: 'Comment'
 	}],
 	readingHistory: [{
-		bookId: { type: mongoose.Schema.Types.ObjectId, ref: 'Book' },
+		book: { type: mongoose.Schema.Types.ObjectId, ref: 'Book' },
 		lastChapterRead: { type: mongoose.Schema.Types.ObjectId, ref: 'Chapter' },
-		updatedAt: { type: Date, default: Date.now }
+		createdAt: { type: Date, default: Date.now }
 	}]
 }, { timestamps: true });
+
+
+// Add this index
+userSchema.index({ 'readingHistory.bookId': 1, 'readingHistory.createdAt': -1 });
 
 module.exports = mongoose.model('User', userSchema);

@@ -234,7 +234,7 @@ const getReadingHistory = async (req, res) => {
 
 		// Find the user and populate the readingHistory field with book and chapter details
 		const user = await User.findById(userId)
-			.populate('readingHistory.bookId', 'title author')
+			.populate('readingHistory.book', 'title author')
 			.populate('readingHistory.lastChapterRead', 'chapterNo title');
 
 		if (!user) {

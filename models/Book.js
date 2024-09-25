@@ -93,4 +93,7 @@ bookSchema.index({ tags: 1 });
 // New index for the trending books query
 bookSchema.index({ updatedAt: -1, views: -1, likeCount: -1 });
 
+// Created Index for book recommendations
+bookSchema.index({ createdAt: -1 });
+
 module.exports = mongoose.model('Book', bookSchema);
