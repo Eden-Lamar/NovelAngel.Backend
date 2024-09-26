@@ -6,7 +6,7 @@ const Book = require('../models/Book');
 // @access private
 const addComment = async (req, res) => {
 	const { bookId } = req.params;
-	const { text } = req.body;
+	const { content } = req.body;
 	const userId = req.user._id;
 
 	try {
@@ -23,7 +23,7 @@ const addComment = async (req, res) => {
 		const newComment = await Comment.create({
 			user: userId,
 			book: bookId,
-			text
+			content
 		});
 
 		res.status(201).json({
