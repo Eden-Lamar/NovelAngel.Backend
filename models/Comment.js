@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
 const commentSchema = new Schema({
-	text: {
+	content: {
 		type: String,
 		trim: true,
 		maxLength: 100,
