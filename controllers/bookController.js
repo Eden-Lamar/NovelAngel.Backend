@@ -128,7 +128,7 @@ const getBookById = async (req, res) => {
 
 //  @description: Get details of a specific chapter by ID within a specific book
 //  @route GET /api/v1/books/:bookId/chapters/:chapterId
-//  @access public
+//  @access public (Optional)
 const getChapterById = async (req, res) => {
 	try {
 		const { bookId, chapterId } = req.params;
@@ -370,8 +370,8 @@ const getTrendingBooks = async (req, res) => {
 // @access public
 const getBookRecommendations = async (req, res) => {
 	try {
-		const userId = req.user ? req.user._id : null; // Only available for logged-in users
-		console.log(userId);
+		const userId = req.user ? req.user.id : null; // Only available for logged-in users
+
 		const recommendedBooks = await getRecommendedBooks(userId);
 
 

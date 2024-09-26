@@ -6,7 +6,7 @@ async function getRecommendedBooks(userId = null, limit = 10) {
 
 	if (userId) {
 		// Registered user: Use personalized recommendations
-		const user = await User.findById(userId).populate('readingHistory.book');
+		const user = await User.findById(userId).populate('readingHistory.book', 'category tags').select('readingHistory.book');
 
 		// Get categories and tags from user's reading history
 		const userCategories = new Set();
@@ -48,7 +48,7 @@ async function getRecommendedBooks(userId = null, limit = 10) {
 	} else {
 		// Calculate balanced limits for each category
 		const popularLimit = Math.floor(limit * 0.4); // The limit parameter is set to 40% of the total limit
-		const recentLimit = Math.floor(limit * 0.3); // The limit parameter is set to 40% of the total limit
+		const recentLimit = Math.floor(limit * 0.4); // The limit parameter is set to 40% of the total limit
 		const randomLimit = limit - popularLimit - recentLimit; // The limit parameter is set to 20% of the total limit
 
 
@@ -69,8 +69,9 @@ async function getRecommendedBooks(userId = null, limit = 10) {
 	}
 
 	// Remove any potential duplicates (in case of overlaps between categories)
-	const uniqueRecommendations = Array.from(new Set(recommendations.map(book => book._id.toString())))
-		.map(id => recommendations.find(book => book._id.toString() === id));
+	const uniqueRecommendations = Array.from(
+		new Map(recommendations.map(book => [book._id.toString(), book]))
+	).map(([_, book]) => book);
 
 	return uniqueRecommendations.slice(0, limit);
 }
