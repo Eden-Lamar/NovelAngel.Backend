@@ -2,6 +2,7 @@
 const Book = require('../models/Book');
 const Chapter = require('../models/Chapter');
 const User = require('../models/User');
+const Comment = require('../models/Comment');
 const { calculateTimeAgo } = require("../utils/helpFunction")
 const { getRecommendedBooks } = require("../utils/bookRecommendations")
 
@@ -84,8 +85,6 @@ const searchBooks = async (req, res) => {
 };
 
 
-
-
 // @description: Get details of a specific book by ID
 // @route GET /api/v1/books/:id
 // @access public
@@ -125,6 +124,102 @@ const getBookById = async (req, res) => {
 	}
 };
 
+
+// @description: Get comments for a specific book
+// @route GET /api/v1/books/:bookId/comments
+// @access public
+const getBookComments = async (req, res) => {
+	try {
+		const { bookId } = req.params;
+		const page = parseInt(req.query.page, 10) || 1; // Default to page 1
+		const limit = parseInt(req.query.limit, 10) || 10; // Default to 10 comments per page
+		const skip = (page - 1) * limit;
+
+		// Verify that the book exists
+		const book = await Book.findById(bookId);
+		if (!book) {
+			return res.status(404).json({
+				status: 'fail',
+				message: 'Book not found',
+			});
+		}
+
+		// Get the total count of comments for the book
+		const totalComments = await Comment.countDocuments({ book: bookId });
+
+		// Fetch the comments, sorted by newest first
+		const comments = await Comment.find({ book: bookId })
+			.sort({ createdAt: -1 }) // Sort by latest
+			.skip(skip)
+			.limit(limit)
+			.populate('user', 'username'); // Populate user info (assuming you have user references)
+
+		res.status(200).json({
+			status: 'success',
+			results: comments.length,
+			total: totalComments,
+			page,
+			totalPages: Math.ceil(totalComments / limit),
+			data: comments,
+		});
+	} catch (error) {
+		console.error('Error in getBookComments:', error);
+		res.status(500).json({
+			status: 'fail',
+			message: 'Server Error',
+		});
+	}
+};
+
+// @description:  Get details of a specific book together with it's comments
+// @route GET /api/v1/books/:id/comments/together
+// @access public
+const getBookWithComments = async (req, res) => {
+	try {
+		const { id } = req.params;
+		const page = parseInt(req.query.page, 10) || 1;
+		const limit = parseInt(req.query.limit, 10) || 10;
+		const skip = (page - 1) * limit;
+
+		const [book, comments, totalComments] = await Promise.all([
+			Book.findById(id)
+				.populate('uploadedBy', 'username -_id')
+				.populate('chapters', 'title chapterNo'),
+			Comment.find({ book: id })
+				.sort({ createdAt: -1 })
+				.skip(skip)
+				.limit(limit)
+				.populate('user', 'username avatar'),
+			Comment.countDocuments({ book: id })
+		]);
+
+		if (!book) {
+			return res.status(404).json({
+				status: 'fail',
+				message: 'Book not found'
+			});
+		}
+
+		res.status(200).json({
+			status: 'success',
+			data: {
+				book,
+				comments: {
+					results: comments.length,
+					total: totalComments,
+					page,
+					totalPages: Math.ceil(totalComments / limit),
+					data: comments
+				}
+			}
+		});
+	} catch (error) {
+		res.status(500).json({
+			status: 'fail',
+			message: error.message
+		});
+	}
+};
 
 //  @description: Get details of a specific chapter by ID within a specific book
 //  @route GET /api/v1/books/:bookId/chapters/:chapterId
@@ -367,7 +462,7 @@ const getTrendingBooks = async (req, res) => {
 
 // @description: Get random book recommendations
 // @route GET /api/v1/books/recommendations
-// @access public
+// @access public (Optional)
 const getBookRecommendations = async (req, res) => {
 	try {
 		const userId = req.user ? req.user.id : null; // Only available for logged-in users
@@ -389,4 +484,4 @@ const getBookRecommendations = async (req, res) => {
 };
 
 
-module.exports = { searchBooks, getBookById, getChapterById, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations };
+module.exports = { searchBooks, getBookById, getChapterById, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations, getBookComments, getBookWithComments };
