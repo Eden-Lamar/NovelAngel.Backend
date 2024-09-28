@@ -1,32 +1,49 @@
 const Book = require("../models/Book");
 const Chapter = require("../models/Chapter");
+const { uploadImage } = require("../utils/s3")
+
 
 // @description: Add a new book
 // @route POST /api/v1/admin/books
 // @access private (Admin)
 const addBook = async (req, res) => {
 	const { title, author, description, category, tags, status } = req.body;
+	// Validate tags
+	if (!tags) {
+		return res.status(400).json({
+			status: "fail",
+			error: "tags is required"
+		});
+	}
+
+	const tagsArr = tags.split(",").map(tag => tag.trim()); // Split tags and trim spaces
+
+	if (!Array.isArray(tagsArr) || tagsArr.length === 0 || tagsArr[0].length === 0) {
+		return res.status(400).json({
+			status: "fail",
+			error: "tags must be a non-empty array"
+		});
+	}
 
 	try {
-		// Validate tags
-		if (!tags || !Array.isArray(tags) || tags.length === 0) {
-			return res.status(400).json({
-				status: "fail",
-				error: "tags must be a non-empty array"
-			});
+		// Check if the bookImage is provided
+		if (!req.file) {
+			return res.status(400).json({ status: "fail", error: "bookImage is required" });
 		}
+
+		// Upload thumbnail
+		const bookImageUrl = await uploadImage(req?.file);
 
 		const newBook = await Book.create({
 			title,
 			author,
 			description,
 			category,
-			tags,
+			tags: tagsArr,
 			status,
+			bookImage: bookImageUrl,
 			uploadedBy: req.user._id,
 		});
-
-		console.log(newBook.tags);
 
 		res.status(201).json({
 			status: "success",
