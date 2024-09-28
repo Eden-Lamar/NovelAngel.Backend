@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Bookmark = require('../models/Bookmark');
 const { registerValidation, loginValidation } = require("../utils/validate");
 const { generateToken } = require("../utils/helpFunction")
+const { uploadImage } = require("../utils/s3")
 
 // @description: Register Users 
 // @route POST /api/v1/user/register
@@ -146,23 +147,37 @@ const updateProfile = async (req, res) => {
 		// Find the user by id
 		const user = await User.findById(req.user.id);
 
-		if (user) {
-			user.username = username || user.username;  // Update if provided, otherwise retain existing value
-			user.email = email || user.email;  // Update if provided, otherwise retain existing value
-
-			const updatedUser = await user.save();
-
-			res.status(200).json({
-				status: "success",
-				message: "Profile updated successfully",
-				data: updatedUser
-			});
-		} else {
+		if (!user) {
 			return res.status(404).json({
 				status: "fail",
 				error: "User not found",
 			});
 		}
+
+		user.username = username || user.username;  // Update if provided, otherwise retain existing value
+		user.email = email || user.email;  // Update if provided, otherwise retain existing value
+
+		// Handle profile picture upload if a file is provided
+		if (req.file) {
+			try {
+				const imageUrl = await uploadImage(req.file); // Upload the image to S3 and get the URL
+				user.avatar = imageUrl; // Save the image URL to the user's profile
+			} catch (error) {
+				return res.status(500).json({
+					status: 'fail',
+					error: error.message,
+				});
+			}
+		}
+
+		// Save the updated user profile
+		const updatedUser = await user.save();
+
+		res.status(200).json({
+			status: "success",
+			message: "Profile updated successfully",
+			data: updatedUser
+		});
 	} catch (error) {
 		res.status(500).json({
 			status: "fail",
@@ -265,5 +280,5 @@ module.exports = {
 	getProfile,
 	updateProfile,
 	getUserBookmarks,
-	getReadingHistory
+	getReadingHistory,
 };
