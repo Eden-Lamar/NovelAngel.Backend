@@ -36,10 +36,14 @@ const bookSchema = new Schema({
 		// required: [true, "category is a Required field"]
 	},
 
+	bookImage: {
+		type: String, // URL of the thumbnail
+		required: true
+	},
+
 	tags: {
 		type: [String],
 		trim: true,
-		default: undefined,
 		required: [true, "tags is a Required field"]
 	},
 
