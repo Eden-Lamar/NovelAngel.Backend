@@ -32,6 +32,10 @@ const userSchema = new Schema({
 		enum: ['user', 'admin'],
 		default: 'user'
 	},
+	avatar: {
+		type: String, // URL of the avatar
+		default: ''
+	},
 	bookmarks: [{
 		type: Schema.Types.ObjectId,
 		ref: 'Bookmark'
