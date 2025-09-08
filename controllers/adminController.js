@@ -1,5 +1,6 @@
 const Book = require("../models/Book");
 const Chapter = require("../models/Chapter");
+const User = require("../models/User");
 const { uploadImage } = require("../utils/s3")
 
 
@@ -160,8 +161,21 @@ const addChapter = async (req, res) => {
 
 		// Determine the next chapter number based on the current chapters
 		const chapterCount = await Chapter.countDocuments({ book: bookId });
-		console.log("chapterCount", chapterCount);
+		// console.log("chapterCount", chapterCount);
 		const newChapterNumber = chapterCount + 1;
+
+		// Logic for locking
+		let finalIsLocked;
+		let lockedAt = null;
+
+		if (newChapterNumber <= book.freeChapters) {
+			// Chapters within freeChapters are always free
+			finalIsLocked = false;
+		} else {
+			// Beyond freeChapters: lock by default, unless explicitly set to false
+			finalIsLocked = isLocked !== undefined ? isLocked : true;
+			lockedAt = finalIsLocked ? new Date() : null;
+		}
 
 		// Create the new chapter
 		const newChapter = await Chapter.create({
@@ -169,7 +183,8 @@ const addChapter = async (req, res) => {
 			content,
 			book: bookId,
 			chapterNo: newChapterNumber, // Assign the new chapter number
-			isLocked,
+			isLocked: finalIsLocked,
+			lockedAt,
 			uploadedBy: req.user._id
 		});
 
@@ -258,4 +273,34 @@ const deleteChapter = async (req, res) => {
 	}
 };
 
-module.exports = { addBook, addChapter, updateBook, deleteBook, updateChapter, deleteChapter };
+// @description: Get dashboard statistics
+// @route GET /api/v1/admin/dashboard
+// @access private (Admin)
+const getDashboardStats = async (req, res) => {
+	try {
+		// Fetch counts concurrently for performance
+		const [totalBooks, ongoingBooks, completedBooks, totalCustomers] = await Promise.all([
+			Book.countDocuments(),
+			Book.countDocuments({ status: 'ongoing' }),
+			Book.countDocuments({ status: 'completed' }),
+			User.countDocuments({ role: 'user' })
+		]);
+
+		res.status(200).json({
+			status: "success",
+			data: {
+				totalBooks,
+				ongoingBooks,
+				completedBooks,
+				totalCustomers
+			}
+		});
+	} catch (error) {
+		res.status(500).json({
+			status: "fail",
+			error: error.message
+		});
+	}
+};
+
+module.exports = { addBook, addChapter, updateBook, deleteBook, updateChapter, deleteChapter, getDashboardStats };
