@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const { addBook, updateBook, deleteBook, addChapter, updateChapter, deleteChapter } = require('../../controllers/adminController');
+const { addBook, updateBook, deleteBook, addChapter, updateChapter, deleteChapter, getDashboardStats } = require('../../controllers/adminController');
 const { protect, admin } = require('../../middlewares/authMiddleware');
 
 const router = express.Router();
@@ -20,5 +20,8 @@ router.delete('/books/:bookId', protect, admin, deleteBook); // Delete a book
 router.post("/books/:bookId/chapters", protect, admin, addChapter); // Add a new chapter
 router.put('/chapters/:chapterId', protect, admin, updateChapter);  // Update a chapter
 router.delete('/books/:bookId/chapters/:chapterId', protect, admin, deleteChapter); // Delete a chapter
+
+// Dashboard statistics
+router.get('/dashboard', protect, admin, getDashboardStats); // Get dashboard stats
 
 module.exports = router;
