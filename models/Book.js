@@ -26,7 +26,7 @@ const bookSchema = new Schema({
 		trim: true,
 		lowercase: true,
 		minLength: 20,
-		maxLength: 200,
+		maxLength: 1000,
 	},
 
 	category: {
@@ -84,6 +84,11 @@ const bookSchema = new Schema({
 		type: mongoose.Schema.Types.ObjectId,
 		ref: 'User',
 	}],
+
+	lastUnlockedAt: {
+		type: Date,
+		default: null
+	},
 
 }, { timestamps: true });
 
