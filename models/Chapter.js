@@ -31,6 +31,11 @@ const chapterSchema = new Schema({
 		default: false
 	}, // Free or locked chapter
 
+	lockedAt: {
+		type: Date,
+		default: null
+	}, // Timestamp when the chapter was locked
+
 	// likes: [{
 	// 	type: Schema.Types.ObjectId,
 	// 	ref: 'Like'
