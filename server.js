@@ -22,7 +22,10 @@ app.use(morgan("dev"));
 app.use('/', indexRouter);
 
 // CONNECT TO DB
-connectDB();
+connectDB().then(() => {
+	// Load cron jobs only after DB is ready
+	require("./jobs/unlockChapters"); // job auto-runs in background
+});
 
 // create Server
 app.listen(port, () => {
