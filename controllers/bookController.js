@@ -101,7 +101,7 @@ const getBookById = async (req, res) => {
 			})
 			.populate({
 				path: 'chapters',
-				select: 'title chapterNo', // Select specific fields from chapters
+				select: 'title chapterNo isLocked', // Select specific fields from chapters
 				options: { sort: { chapterNo: 1 } } // Optional: Sort chapters by chapter number in asce order
 			});
 
@@ -483,5 +483,44 @@ const getBookRecommendations = async (req, res) => {
 	}
 };
 
+// @description: Get all books with pagination
+// @route GET /api/v1/books
+// @access public
+const getAllBooks = async (req, res) => {
+	try {
+		const { page = 1, limit = 6 } = req.query;
+		const pageNumber = parseInt(page, 10) || 1;
+		const limitNumber = parseInt(limit, 10) || 6;
+		const skip = (pageNumber - 1) * limitNumber;
 
-module.exports = { searchBooks, getBookById, getChapterById, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations, getBookComments, getBookWithComments };
+		const booksPromise = Book.find()
+			.sort({ createdAt: -1 }) // Sort by creation date descending so that mean the newest books appear first
+			.skip(skip)
+			.limit(limitNumber)
+			.select('title bookImage status chapters');
+		const countPromise = Book.countDocuments();
+
+		// Execute both promises in parallel to improve performance that means we are fetching the books and counting the total number of books at the same time
+		const [books, total] = await Promise.all([booksPromise, countPromise]);
+		const totalPages = Math.ceil(total / limitNumber);
+
+		res.status(200).json({
+			status: 'success',
+			results: books.length,
+			data: books,
+			pagination: {
+				total,
+				currentPage: pageNumber,
+				totalPages
+			}
+		});
+	} catch (error) {
+		res.status(500).json({
+			status: 'fail',
+			message: error.message
+		});
+	}
+};
+
+
+module.exports = { searchBooks, getBookById, getChapterById, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations, getBookComments, getBookWithComments, getAllBooks };
