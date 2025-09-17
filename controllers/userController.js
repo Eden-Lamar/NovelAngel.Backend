@@ -3,7 +3,7 @@ const User = require('../models/User');
 const Bookmark = require('../models/Bookmark');
 const { registerValidation, loginValidation } = require("../utils/validate");
 const { generateToken } = require("../utils/helpFunction")
-const { uploadImage } = require("../utils/s3")
+const { uploadImage, deleteImage } = require("../utils/s3")
 
 // @description: Register Users 
 // @route POST /api/v1/user/register
@@ -33,10 +33,10 @@ const registerUser = async (req, res) => {
 
 		// Hash password
 		const hashedPassword = await bcrypt.hash(password, 10);
-
+		const formattedUsername = username.replaceAll(" ", "_");
 		// Create user
 		const user = await User.create({
-			username,
+			formattedUsername,
 			email,
 			password: hashedPassword,
 			role
@@ -142,7 +142,7 @@ const getProfile = async (req, res) => {
 
 const updateProfile = async (req, res) => {
 	try {
-		const { username, email } = req.body;
+		const { username, email, removeAvatar } = req.body;
 
 		// Find the user by id
 		const user = await User.findById(req.user.id);
@@ -154,12 +154,15 @@ const updateProfile = async (req, res) => {
 			});
 		}
 
-		user.username = username || user.username;  // Update if provided, otherwise retain existing value
+		user.username = username.replaceAll(" ", "_") || user.username;  // Update if provided, otherwise retain existing value
 		user.email = email || user.email;  // Update if provided, otherwise retain existing value
 
-		// Handle profile picture upload if a file is provided
+		// Handle profile picture upload if a file is provided but delete old one first
 		if (req.file) {
 			try {
+				if (user.avatar) {
+					await deleteImage(user.avatar); // delete old avatar
+				}
 				const imageUrl = await uploadImage(req.file); // Upload the image to S3 and get the URL
 				user.avatar = imageUrl; // Save the image URL to the user's profile
 			} catch (error) {
@@ -168,6 +171,12 @@ const updateProfile = async (req, res) => {
 					error: error.message,
 				});
 			}
+		}
+
+		// Handle avatar removal
+		if (removeAvatar && user.avatar) {
+			await deleteImage(user.avatar);
+			user.avatar = null;
 		}
 
 		// Save the updated user profile
@@ -249,7 +258,7 @@ const getReadingHistory = async (req, res) => {
 
 		// Find the user and populate the readingHistory field with book and chapter details
 		const user = await User.findById(userId)
-			.populate('readingHistory.book', 'title author')
+			.populate('readingHistory.book', 'title author bookImage')
 			.populate('readingHistory.lastChapterRead', 'chapterNo title');
 
 		if (!user) {
