@@ -1,7 +1,7 @@
 const Book = require("../models/Book");
 const Chapter = require("../models/Chapter");
 const User = require("../models/User");
-const { uploadImage } = require("../utils/s3")
+const { uploadImage, deleteImage } = require("../utils/s3")
 
 
 // @description: Add a new book
@@ -121,6 +121,11 @@ const deleteBook = async (req, res) => {
 				status: "fail",
 				error: "Book not found",
 			});
+		}
+
+		// Delete book image from S3 if it exists
+		if (book.bookImage) {
+			await deleteImage(book.bookImage);
 		}
 
 		// Delete associated chapters
