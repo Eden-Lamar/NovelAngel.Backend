@@ -34,7 +34,7 @@ const userSchema = new Schema({
 	},
 	avatar: {
 		type: String, // URL of the avatar
-		default: ''
+		default: null
 	},
 	bookmarks: [{
 		type: Schema.Types.ObjectId,
