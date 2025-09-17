@@ -54,4 +54,23 @@ const uploadImage = async (file) => {
 	}
 };
 
-module.exports = { uploadImage };
+// Delete image
+const deleteImage = async (fileUrl) => {
+	try {
+		// fileUrl looks like: https://bucket.s3.region.amazonaws.com/avatar/12345_img.png
+		const key = fileUrl.split('.amazonaws.com/')[1];
+
+		const params = {
+			Bucket: bucketName,
+			Key: key,
+		};
+
+		await s3Client.send(new DeleteObjectCommand(params));
+		return true;
+	} catch (error) {
+		console.error('Error deleting image:', error);
+		throw new Error(`Failed to delete image: ${error.message}`);
+	}
+};
+
+module.exports = { uploadImage, deleteImage };
