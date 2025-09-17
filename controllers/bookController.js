@@ -101,7 +101,7 @@ const getBookById = async (req, res) => {
 			})
 			.populate({
 				path: 'chapters',
-				select: 'title chapterNo isLocked', // Select specific fields from chapters
+				select: 'title chapterNo isLocked createdAt', // Select specific fields from chapters
 				options: { sort: { chapterNo: 1 } } // Optional: Sort chapters by chapter number in asce order
 			});
 
@@ -497,7 +497,7 @@ const getAllBooks = async (req, res) => {
 			.sort({ createdAt: -1 }) // Sort by creation date descending so that mean the newest books appear first
 			.skip(skip)
 			.limit(limitNumber)
-			.select('title bookImage status chapters');
+			.select('title description bookImage status chapters views likeCount');
 		const countPromise = Book.countDocuments();
 
 		// Execute both promises in parallel to improve performance that means we are fetching the books and counting the total number of books at the same time
