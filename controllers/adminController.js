@@ -8,7 +8,7 @@ const { uploadImage, deleteImage } = require("../utils/s3")
 // @route POST /api/v1/admin/books
 // @access private (Admin)
 const addBook = async (req, res) => {
-	const { title, author, description, category, tags, status } = req.body;
+	const { title, author, description, category, country, tags, status } = req.body;
 	// Validate tags
 	if (!tags) {
 		return res.status(400).json({
@@ -40,6 +40,7 @@ const addBook = async (req, res) => {
 			author,
 			description,
 			category,
+			country,
 			tags: tagsArr,
 			status,
 			bookImage: bookImageUrl,
@@ -64,7 +65,7 @@ const addBook = async (req, res) => {
 // @access private (Admin)
 const updateBook = async (req, res) => {
 	const { bookId } = req.params;
-	const { title, author, description, category, tags, status } = req.body;
+	let { title, author, description, category, country, tags, status } = req.body;
 
 	try {
 		const book = await Book.findById(bookId);
@@ -75,23 +76,40 @@ const updateBook = async (req, res) => {
 			});
 		}
 
+		// Convert tags string -> array only if tags was actually sent
+		if (tags !== undefined) {
+			try {
+				tags = JSON.parse(tags); // comes as stringified array
+			} catch {
+				tags = Array.isArray(tags) ? tags : tags.split(",");
+			}
+
+			// clean up tags
+			tags = tags.map(tag => tag.trim()).filter(Boolean);
+
+			if (tags.length > 0) {
+				book.tags = tags; // overwrite only if non-empty
+			}
+			// if empty, do nothing → keeps old tags
+		}
+
+		// Handle book image upload
+		if (req.file) {
+			if (book.bookImage) {
+				await deleteImage(book.bookImage); // delete old one
+			}
+			const bookImageUrl = await uploadImage(req.file);
+			book.bookImage = bookImageUrl;
+		}
+
+		// If neither req.file is provided, book.bookImage remains unchanged
 		// Update the book fields
 		book.title = title || book.title;
 		book.author = author || book.author;
 		book.description = description || book.description;
 		book.category = category || book.category;
+		book.country = country || book.country;
 		book.status = status || book.status;
-
-		// Update tags if provided
-		if (tags) {
-			if (!Array.isArray(tags) || tags.length === 0) {
-				return res.status(400).json({
-					status: "fail",
-					error: "tags must be a non-empty array"
-				});
-			}
-			book.tags = tags; // Directly assign the new tags array
-		}
 
 		const updatedBook = await book.save();
 
