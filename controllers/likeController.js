@@ -60,4 +60,24 @@ const toggleLike = async (req, res) => {
 	}
 };
 
-module.exports = { toggleLike };
+// @description: Check if a user has liked a book
+// @route GET /api/v1/books/:bookId/like-status
+// @access private
+const getLikeStatus = async (req, res) => {
+    const { bookId } = req.params;
+    const userId = req.user._id;
+    try {
+        const like = await Like.findOne({ user: userId, book: bookId });
+        res.status(200).json({
+            status: "success",
+            isLiked: !!like
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: "fail",
+            error: error.message
+        });
+    }
+};
+
+module.exports = { toggleLike, getLikeStatus };
