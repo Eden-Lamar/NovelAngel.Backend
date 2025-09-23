@@ -50,4 +50,24 @@ const toggleBookmark = async (req, res) => {
 	}
 };
 
-module.exports = { toggleBookmark };
+// @description: Check if a user has bookmarked a book
+// @route GET /api/v1/books/:bookId/bookmark-status
+// @access private
+const getBookmarkStatus = async (req, res) => {
+	const { bookId } = req.params;
+	const userId = req.user._id;
+	try {
+		const bookmark = await Bookmark.findOne({ user: userId, book: bookId });
+		res.status(200).json({
+			status: "success",
+			isBookmarked: !!bookmark
+		});
+	} catch (error) {
+		res.status(500).json({
+			status: "fail",
+			error: error.message
+		});
+	}
+};
+
+module.exports = { toggleBookmark, getBookmarkStatus };
