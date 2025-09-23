@@ -31,9 +31,15 @@ const bookSchema = new Schema({
 
 	category: {
 		type: String,
-		enum: ['Translation', 'Original stories', 'Fanfiction'],
-		default: 'Translation', // Default value for category
+		enum: ['BL', 'GL', 'BG'],
+		default: 'BL', // Default value for category
 		// required: [true, "category is a Required field"]
+	},
+
+	country: {
+		type: String,
+		enum: ['Chinese', 'Japanese', 'South Korean'],
+		required: [true, "Country is a Required field"]
 	},
 
 	bookImage: {
