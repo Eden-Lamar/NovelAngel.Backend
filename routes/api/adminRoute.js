@@ -13,7 +13,7 @@ const upload = multer({
 
 // Book Routes
 router.post('/books', protect, admin, upload.single('bookImage'), addBook);             // Create new book
-router.put('/books/:bookId', protect, admin, updateBook);   // Update a book
+router.put('/books/:bookId', protect, admin, upload.single('bookImage'), updateBook);   // Update a book
 router.delete('/books/:bookId', protect, admin, deleteBook); // Delete a book
 
 // Admin can upload chapters
