@@ -497,7 +497,7 @@ const getAllBooks = async (req, res) => {
 			.sort({ createdAt: -1 }) // Sort by creation date descending so that mean the newest books appear first
 			.skip(skip)
 			.limit(limitNumber)
-			.select('title description bookImage status chapters views likeCount');
+			.select('title description bookImage status chapters views likeCount country');
 		const countPromise = Book.countDocuments();
 
 		// Execute both promises in parallel to improve performance that means we are fetching the books and counting the total number of books at the same time
