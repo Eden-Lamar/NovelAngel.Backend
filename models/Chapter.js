@@ -30,6 +30,12 @@ const chapterSchema = new Schema({
 		type: Boolean,
 		default: false
 	}, // Free or locked chapter
+	
+	coinCost: {
+    type: Number,
+    default: 0,
+    min: 0
+  }, // Cost in coins to unlock
 
 	lockedAt: {
 		type: Date,
