@@ -101,7 +101,7 @@ const getBookById = async (req, res) => {
 			})
 			.populate({
 				path: 'chapters',
-				select: 'title chapterNo isLocked createdAt', // Select specific fields from chapters
+				select: 'title chapterNo isLocked createdAt coinCost', // Select specific fields from chapters
 				options: { sort: { chapterNo: 1 } } // Optional: Sort chapters by chapter number in asce order
 			});
 
@@ -248,6 +248,32 @@ const getChapterById = async (req, res) => {
 			});
 		}
 
+		let canAccess = !chapter.isLocked;
+		if (userId) {
+			const user = await User.findById(userId).select('unlockedChapters');
+			if (chapter.isLocked && user.unlockedChapters.includes(chapter._id)) {
+				canAccess = true;
+			}
+		}
+		if (!canAccess) {
+			return res.status(200).json({
+				status: 'locked',
+				data: {
+					bookTitle: book.title,
+					chapter: {
+						_id: chapter._id,
+						title: chapter.title,
+						chapterNo: chapter.chapterNo,
+						createdAt: chapter.createdAt,
+						isLocked: true,
+						coinCost: chapter.coinCost,
+						// Don’t send content since it’s locked
+						content: null,
+					},
+				}
+			});
+		}
+
 		// Increment views only if the user is registered and hasn't viewed the book yet
 		if (userId && !book.viewedBy.includes(userId)) {
 			book.views += 1; // Increment the view count
@@ -287,10 +313,87 @@ const getChapterById = async (req, res) => {
 			status: 'success',
 			data: {
 				bookTitle: book.title,
-				chapter,
+				chapter: {
+					_id: chapter._id,
+					title: chapter.title,
+					chapterNo: chapter.chapterNo,
+					createdAt: chapter.createdAt,
+					isLocked: false, // Override for users who can access
+					coinCost: chapter.coinCost,
+					content: chapter.content,
+				},
 			},
 		});
 
+	} catch (error) {
+		res.status(500).json({
+			status: 'fail',
+			message: error.message
+		});
+	}
+};
+
+
+// @description: Unlock a locked chapter using coins
+// @route POST /api/v1/books/:bookId/chapters/:chapterId/unlock
+// @access private
+const unlockChapter = async (req, res) => {
+	try {
+		const { bookId, chapterId } = req.params;
+		const userId = req.user._id;
+
+		// Find the chapter
+		const chapter = await Chapter.findOne({ _id: chapterId, book: bookId });
+		if (!chapter) {
+			return res.status(404).json({
+				status: 'fail',
+				message: 'Chapter not found'
+			});
+		}
+
+		// Check if chapter is locked
+		if (!chapter.isLocked) {
+			return res.status(400).json({
+				status: 'fail',
+				message: 'Chapter is already free'
+			});
+		}
+
+		// Find the user
+		const user = await User.findById(userId).select("coinBalance unlockedChapters");;
+		if (!user) {
+			return res.status(404).json({
+				status: 'fail',
+				message: 'User not found'
+			});
+		}
+
+		// Check if chapter is already unlocked
+		if (user.unlockedChapters.some(id => id.equals(chapter._id))) {
+			return res.status(400).json({
+				status: 'fail',
+				message: 'Chapter already unlocked'
+			});
+		}
+
+		// Check if user has enough coins
+		if (user.coinBalance < chapter.coinCost) {
+			return res.status(400).json({
+				status: 'fail',
+				message: "Insufficient coins"
+			});
+		}
+
+		// Deduct coins and unlock
+		user.coinBalance -= chapter.coinCost;
+		user.unlockedChapters.push(chapter._id);
+		await user.save();
+
+		res.status(200).json({
+			status: 'success',
+			message: 'Chapter unlocked successfully',
+			remainingCoins: user.coinBalance
+		});
 	} catch (error) {
 		res.status(500).json({
 			status: 'fail',
@@ -523,4 +626,4 @@ const getAllBooks = async (req, res) => {
 };
 
 
-module.exports = { searchBooks, getBookById, getChapterById, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations, getBookComments, getBookWithComments, getAllBooks };
+module.exports = { searchBooks, getBookById, getChapterById, unlockChapter, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations, getBookComments, getBookWithComments, getAllBooks };
