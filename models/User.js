@@ -36,6 +36,15 @@ const userSchema = new Schema({
 		type: String, // URL of the avatar
 		default: null
 	},
+	coinBalance: {
+		type: Number,
+		default: 0,
+		min: 0
+	},
+	unlockedChapters: [{
+		type: Schema.Types.ObjectId,
+		ref: 'Chapter'
+	}],
 	bookmarks: [{
 		type: Schema.Types.ObjectId,
 		ref: 'Bookmark'
@@ -57,6 +66,6 @@ const userSchema = new Schema({
 
 
 // Add this index
-userSchema.index({ 'readingHistory.bookId': 1, 'readingHistory.createdAt': -1 });
+userSchema.index({ 'readingHistory.book': 1, 'readingHistory.createdAt': -1 });
 
 module.exports = mongoose.model('User', userSchema);
