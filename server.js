@@ -2,6 +2,7 @@
 const express = require("express");
 const morgan = require("morgan");
 const cors = require("cors");
+const bodyParser = require('body-parser');  // We use this instead of express.json() for raw body capture
 require("dotenv").config();
 const connectDB = require("./config/db");
 const indexRouter = require('./routes/index');
@@ -14,12 +15,35 @@ const corsOptions = {
 };
 
 // APPLICATION MIDDLEWARE
-app.use(express.json());
+app.use(
+	bodyParser.json({
+		verify: (req, res, buf) => {
+			req.rawBody = buf.toString(); // Save raw body for webhook verification
+		},
+	})
+);
 app.use(cors(corsOptions));
 app.use(morgan("dev"));
 
 // ROUTES MIDDLEWARE
 app.use('/', indexRouter);
+
+// PAYMENT CALLBACK ROUTE (for Postman testing, and frontend)
+app.get("/payment/callback", (req, res) => {
+	const { status, tx_ref, transaction_id } = req.query;
+	console.log("Payment callback:", { status, tx_ref, transaction_id });
+
+	// Build query parameters
+	const params = new URLSearchParams({
+		status: status || 'unknown',
+		tx_ref: tx_ref || '',
+		...(transaction_id && { transaction_id })
+	});
+
+	// Redirect to frontend success page
+	const frontendUrl = `${process.env.FRONTEND_URL}/payment/success?${params.toString()}`;
+	res.redirect(frontendUrl);
+});
 
 // CONNECT TO DB
 connectDB().then(() => {
