@@ -169,7 +169,7 @@ const deleteBook = async (req, res) => {
 // @route POST /api/v1/admin/books/:bookId/chapters
 // @access private (Admin)
 const addChapter = async (req, res) => {
-	const { title, content, isLocked } = req.body;
+	const { title, content, isLocked, coinCost } = req.body;
 	const { bookId } = req.params;
 
 	try {
@@ -191,6 +191,8 @@ const addChapter = async (req, res) => {
 		let finalIsLocked;
 		let lockedAt = null;
 
+		let finalCoinCost = 0;
+
 		if (newChapterNumber <= book.freeChapters) {
 			// Chapters within freeChapters are always free
 			finalIsLocked = false;
@@ -198,6 +200,7 @@ const addChapter = async (req, res) => {
 			// Beyond freeChapters: lock by default, unless explicitly set to false
 			finalIsLocked = isLocked !== undefined ? isLocked : true;
 			lockedAt = finalIsLocked ? new Date() : null;
+			finalCoinCost = finalIsLocked ? (coinCost || 10) : 0;
 		}
 
 		// Create the new chapter
@@ -207,6 +210,7 @@ const addChapter = async (req, res) => {
 			book: bookId,
 			chapterNo: newChapterNumber, // Assign the new chapter number
 			isLocked: finalIsLocked,
+			coinCost: finalCoinCost,
 			lockedAt,
 			uploadedBy: req.user._id
 		});
@@ -230,7 +234,7 @@ const addChapter = async (req, res) => {
 // Update Chapter
 const updateChapter = async (req, res) => {
 	const { chapterId } = req.params;
-	const { title, content, isLocked } = req.body;
+	const { title, content, isLocked, coinCost } = req.body;
 
 	try {
 		const chapter = await Chapter.findById(chapterId);
@@ -244,8 +248,10 @@ const updateChapter = async (req, res) => {
 		// Update the chapter fields
 		chapter.title = title || chapter.title;
 		chapter.content = content || chapter.content;
-		chapter.isLocked = isLocked !== undefined ? isLocked : chapter.isLocked;
-
+		const newIsLocked = isLocked !== undefined ? isLocked : chapter.isLocked;
+		chapter.isLocked = newIsLocked;
+		chapter.coinCost = newIsLocked ? (coinCost !== undefined ? coinCost : chapter.coinCost) : 0;
+		
 		const updatedChapter = await chapter.save();
 
 		res.status(200).json({
