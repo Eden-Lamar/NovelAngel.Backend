@@ -6,5 +6,6 @@ router.use("/", require("./likeRoute"))
 router.use("/", require("./bookmarkRoute"))
 router.use("/", require("./commentRoute"))
 router.use("/", require("./bookRoute"))
+router.use("/payments", require("./paymentsRoute"))
 
 module.exports = router
