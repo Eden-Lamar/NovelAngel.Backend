@@ -487,18 +487,10 @@ const getLatestUpdatedBooks = async (req, res) => {
 // @access public
 const getTrendingBooks = async (req, res) => {
 	try {
-		const timeFrame = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
 		const now = new Date();
-		const weekAgo = new Date(now - timeFrame);
 
 		const trendingBooks = await Book.aggregate([
-			// Match books updated within the last week
-			{
-				$match: {
-					updatedAt: { $gte: weekAgo }
-				}
-			},
-			// Lookup to get the count of chapters
+			// Lookup chapters
 			{
 				$lookup: {
 					from: 'chapters',
@@ -507,44 +499,55 @@ const getTrendingBooks = async (req, res) => {
 					as: 'chaptersData'
 				}
 			},
-			// Calculate a trending score
+			// Compute fields safely
 			{
 				$addFields: {
-					trendingScore: {
-						$add: [
-							{ $multiply: ['$views', 1] },  // Weight for views
-							{ $multiply: ['$likeCount', 2] },  // Weight for likes
-							{ $multiply: [{ $size: '$chaptersData' }, 5] }  // Weight for number of chapters
+					numericViews: { $ifNull: [{ $toInt: "$views" }, 0] },
+					numericLikes: { $ifNull: [{ $toInt: "$likeCount" }, 0] },
+					safeUpdatedAt: { $ifNull: ["$updatedAt", "$createdAt"] },
+					daysSinceUpdate: {
+						$divide: [
+							{ $subtract: [now, { $ifNull: ["$updatedAt", "$createdAt"] }] },
+							1000 * 60 * 60 * 24 // ms → days
 						]
 					}
 				}
 			},
-			// Filter out books with null trending score
+			// Add decay-based score
 			{
-				$match: {
-					trendingScore: { $ne: null }
+				$addFields: {
+					decayFactor: { $exp: { $multiply: ["$daysSinceUpdate", -0.1] } },
+					trendingScore: {
+						$multiply: [
+							{
+								$add: [
+									{ $multiply: ["$numericViews", 3] },  // Views weight
+									{ $multiply: ["$numericLikes", 5] },  // Likes weight
+									{ $multiply: [{ $size: "$chaptersData" }, 1] }  // Chapters weight
+								]
+							},
+							{ $exp: { $multiply: ["$daysSinceUpdate", -0.1] } } // Decay over time
+						]
+					}
 				}
 			},
-			// Sort by trending score
-			{
-				$sort: { trendingScore: -1 }
-			},
-			// Limit to top 10
-			{
-				$limit: 10
-			},
-			// Project only necessary fields
+			{ $sort: { trendingScore: -1 } },
+			{ $limit: 10 },
 			{
 				$project: {
 					title: 1,
-					author: 1,
+					description: 1,
+					country: 1,
 					category: 1,
 					tags: 1,
 					status: 1,
-					views: 1,
-					likeCount: 1,
-					chapterCount: { $size: '$chaptersData' },
-					trendingScore: 1
+					bookImage: 1,
+					views: "$numericViews",
+					likeCount: "$numericLikes",
+					chapterCount: { $size: "$chaptersData" },
+					daysSinceUpdate: 1,
+					trendingScore: 1,
+					decayFactor: 1
 				}
 			}
 		]);
