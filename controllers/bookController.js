@@ -30,19 +30,19 @@ const searchBooks = async (req, res) => {
 
 		// 4. Filter by Category (Exact Match)
 		if (category) {
-			query.category = category;
+			query.category = { $regex: `^${category}$`, $options: 'i' };
 		}
 
 		// 5. Filter by Tags (All Specified Tags Must Match)
 		if (tags) {
 			// Split the comma-separated tags into an array and trim whitespace
 			const tagsArray = tags.split(',').map(tag => tag.trim());
-			query.tags = { $all: tagsArray };
+			query.tags = { $all: tagsArray.map(tag => new RegExp(`^${tag}$`, 'i')) };
 		}
 
 		// filter by status (Exact Match)
 		if (status) {
-			query.status = status;
+			query.status = { $regex: `^${status}$`, $options: 'i' };
 		}
 
 		// 7. Pagination Calculations
@@ -52,6 +52,7 @@ const searchBooks = async (req, res) => {
 		console.log(query);
 		// 8. Execute the Query with Filters, Sorting, and Pagination
 		const booksPromise = Book.find(query)
+			.select('title author description category bookImage tags status likeCount country views')
 			.sort({ createdAt: -1 }) // Apply sorting
 			.skip(skip) // Skip books for pagination
 			.limit(limitNumber) // Limit the number of books returned
@@ -79,7 +80,7 @@ const searchBooks = async (req, res) => {
 	} catch (error) {
 		res.status(500).json({
 			status: 'fail',
-			error: 'Server Error'
+			error: error.message || 'Server Error'
 		});
 	}
 };
@@ -432,48 +433,65 @@ const getNewBooks = async (req, res) => {
 // @access public
 const getLatestUpdatedBooks = async (req, res) => {
 	try {
-		// 1. Find books with at least one chapter, whether ongoing or completed
-		const books = await Book.find({
-			chapters: { $exists: true, $ne: [] }, // Ensure books have chapters
-			status: { $in: ['ongoing', 'completed'] } // Filter for ongoing or completed books
-		})
-			.populate({
-				path: 'chapters',
-				options: { sort: { updatedAt: -1 }, limit: 1 } // Get only the latest chapter for each book
-			})
-			.sort({ 'chapters.updatedAt': -1 }) // Sort by the most recently updated chapter
-			.limit(10); // Limit to 10 books
+		const books = await Book.aggregate([
+			// Only include books with chapters and valid status
+			{
+				$match: {
+					chapters: { $exists: true, $ne: [] },
+					status: { $in: ['ongoing', 'completed'] }
+				}
+			},
+			// Lookup chapters
+			{
+				$lookup: {
+					from: 'chapters',
+					localField: 'chapters',
+					foreignField: '_id',
+					as: 'chaptersData'
+				}
+			},
+			// Unwind chapters for sorting
+			{ $unwind: '$chaptersData' },
+			// Sort by most recently updated chapter
+			{ $sort: { 'chaptersData.createdAt': -1 } },
+			// Group by book and take latest chapter
+			{
+				$group: {
+					_id: '$_id',
+					title: { $first: '$title' },
+					bookImage: { $first: '$bookImage' },
+					latestChapter: { $first: '$chaptersData' },
+				}
+			},
+			// Ensure response itself is sorted newest-to-oldest
+			{ $sort: { "latestChapter.createdAt": -1 } },
+			// Limit results
+			{ $limit: 20 },
+		]);
 
-		// 2. Format the response with the latest chapter number and time ago
+		// Format response
 		const latestBooks = books.map(book => {
-			const latestChapter = book.chapters[0]; // The latest chapter
-
-			// Check if the book has a latest chapter before trying to access its properties
-			if (!latestChapter) {
-				return null; // Skip books with no chapters
-			}
-
-			const timeAgo = calculateTimeAgo(latestChapter.updatedAt); // Calculate how long ago the chapter was added
+			const latestChapter = book.latestChapter;
+			const timeAgo = calculateTimeAgo(latestChapter.createdAt);
 
 			return {
 				bookId: book._id,
 				title: book.title,
-				author: book.author,
-				category: book.category,
-				status: book.status,
+				bookImage: book.bookImage,
 				latestChapter: {
+					title: latestChapter.title,
 					chapterNo: latestChapter.chapterNo,
-					updatedAt: timeAgo, // Time ago (e.g., "2 days ago")
+					updatedAt: timeAgo,
 				},
 			};
-		}).filter(book => book !== null); // Filter out null values (books with no chapters)
+		});
 
-		// 3. Send the response with the formatted data
 		res.status(200).json({
 			status: 'success',
 			result: latestBooks.length,
 			data: latestBooks
 		});
+
 	} catch (error) {
 		res.status(500).json({
 			status: 'fail',
@@ -481,6 +499,7 @@ const getLatestUpdatedBooks = async (req, res) => {
 		});
 	}
 };
+
 
 // @description: Get the top 10 trending books
 // @route GET /api/v1/books/trending

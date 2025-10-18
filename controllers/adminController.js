@@ -111,7 +111,9 @@ const updateBook = async (req, res) => {
 		book.country = country || book.country;
 		book.status = status || book.status;
 
-		const updatedBook = await book.save();
+
+		// Prevent automatic updatedAt change on save
+		const updatedBook = await book.save({ timestamps: false });
 
 		res.status(200).json({
 			status: "success",
@@ -251,7 +253,6 @@ const updateChapter = async (req, res) => {
 		const newIsLocked = isLocked !== undefined ? isLocked : chapter.isLocked;
 		chapter.isLocked = newIsLocked;
 		chapter.coinCost = newIsLocked ? (coinCost !== undefined ? coinCost : chapter.coinCost) : 0;
-		
 		const updatedChapter = await chapter.save();
 
 		res.status(200).json({
