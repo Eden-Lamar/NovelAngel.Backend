@@ -38,7 +38,7 @@ const userSchema = new Schema({
 	},
 	coinBalance: {
 		type: Number,
-		default: 0,
+		default: 30, // 🎁 Give new users 30 free coins automatically
 		min: 0
 	},
 	unlockedChapters: [{
