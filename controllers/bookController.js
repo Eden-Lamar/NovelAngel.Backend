@@ -52,7 +52,7 @@ const searchBooks = async (req, res) => {
 		console.log(query);
 		// 8. Execute the Query with Filters, Sorting, and Pagination
 		const booksPromise = Book.find(query)
-			.select('title author description category bookImage tags status likeCount country views')
+			.select('title author description category chapters bookImage tags status likeCount country views')
 			.sort({ createdAt: -1 }) // Apply sorting
 			.skip(skip) // Skip books for pagination
 			.limit(limitNumber) // Limit the number of books returned
