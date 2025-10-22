@@ -22,7 +22,7 @@ const registerUser = async (req, res) => {
 	const { username, email, password, role } = req.body;
 
 	try {
-		// // Check if user already exists
+		// Check if user already exists
 		const userExists = await User.findOne({ email });
 		if (userExists) {
 			return res.status(400).json({
@@ -81,6 +81,14 @@ const loginUser = async (req, res) => {
 				error: "Account doesn't exist",
 			});
 		}
+
+		// // ✅ Only allow 'user' role to log in from this route
+		// if (user.role !== "user") {
+		//   return res.status(403).json({
+		//     status: "fail",
+		//     error: "Access denied. Please use the admin portal to log in.",
+		//   });
+		// }
 
 		// Check password
 		const isMatch = await bcrypt.compare(password, user.password);
