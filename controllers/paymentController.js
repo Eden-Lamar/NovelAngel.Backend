@@ -54,11 +54,15 @@ const buyCoins = async (req, res) => {
 			currency: 'USD'
 		});
 
+		// Determine origin port for redirect_url
+		const userOrigin = req.get('Origin') || req.get('Referer') || '';
+		const originPort = userOrigin.includes('3002') ? '3002' : '3001';
+
 		const payload = {
 			tx_ref,
 			amount,
 			currency: 'USD',
-			redirect_url: `${process.env.APP_URL}/payment/callback`, // Redirects to callback route Adjust to your callback URL
+			redirect_url: `${process.env.APP_URL}/payment/callback?origin=${originPort}`, // Redirects to callback route Adjust to your callback URL
 			payment_options: 'card,ussd,banktransfer',
 			customer: {
 				email: user.email,

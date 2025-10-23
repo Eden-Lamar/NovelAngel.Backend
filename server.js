@@ -30,8 +30,13 @@ app.use('/', indexRouter);
 
 // PAYMENT CALLBACK ROUTE (for Postman testing, and frontend)
 app.get("/payment/callback", (req, res) => {
-	const { status, tx_ref, transaction_id } = req.query;
+	const { status, tx_ref, transaction_id, origin } = req.query;
 	console.log("Payment callback:", { status, tx_ref, transaction_id });
+
+	const port = (origin === '3002') ? '3002' : '3001';
+	const baseUrl = (port === '3002') ? process.env.FRONTEND_USER_URL : process.env.FRONTEND_URL;
+
+	console.log("Base URL:", baseUrl);
 
 	// Build query parameters
 	const params = new URLSearchParams({
@@ -41,7 +46,9 @@ app.get("/payment/callback", (req, res) => {
 	});
 
 	// Redirect to frontend success page
-	const frontendUrl = `${process.env.FRONTEND_URL}/payment/success?${params.toString()}`;
+	const frontendUrl = `${baseUrl}/payment/success?${params.toString()}`;
+	console.log("Redirecting to:", frontendUrl);
+
 	res.redirect(frontendUrl);
 });
 
