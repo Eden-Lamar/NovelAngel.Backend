@@ -289,6 +289,61 @@ const getReadingHistory = async (req, res) => {
 	}
 };
 
+// @description: Get the user's continue reading list
+// @route GET /api/v1/user/continue-reading
+// @access private
+const getContinueReading = async (req, res) => {
+	try {
+		const userId = req.user._id;
+
+		// Get the user with their reading history (limit to 6 most recent)
+		const user = await User.findById(userId)
+			.populate({
+				path: "readingHistory.book",
+				select: "title bookImage chapters", // fetch these fields
+			})
+			.populate({
+				path: "readingHistory.lastChapterRead",
+				select: "title chapterNo", // fetch chapter title and number
+			})
+			.lean();
+
+		if (!user || !user.readingHistory.length) {
+			return res.status(200).json({
+				status: "success",
+				results: 0,
+				data: [],
+			});
+		}
+
+		// Format the data and limit to 6
+		const continueReading = user.readingHistory
+			.slice(0, 6)
+			.map((entry) => ({
+				bookId: entry.book?._id,
+				bookTitle: entry.book?.title,
+				bookImage: entry.book?.bookImage,
+				lastChapter: {
+					id: entry.lastChapterRead?._id,
+					title: entry.lastChapterRead?.title,
+					number: entry.lastChapterRead?.chapterNo,
+				},
+				totalChapters: entry.book?.chapters?.length || 0,
+			}));
+
+		res.status(200).json({
+			status: "success",
+			results: continueReading.length,
+			data: continueReading,
+		});
+	} catch (error) {
+		console.error("Error in getContinueReading:", error);
+		res.status(500).json({
+			status: "fail",
+			message: error.message,
+		});
+	}
+};
 
 
 module.exports = {
