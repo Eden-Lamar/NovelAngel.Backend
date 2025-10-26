@@ -308,7 +308,7 @@ const getContinueReading = async (req, res) => {
 			})
 			.lean();
 
-		if (!user || !user.readingHistory.length) {
+		if (!user || !user.readingHistory?.length) {
 			return res.status(200).json({
 				status: "success",
 				results: 0,
@@ -316,8 +316,17 @@ const getContinueReading = async (req, res) => {
 			});
 		}
 
+		// ✅ Deduplicate — keep latest chapter per book
+		const seenBooks = new Set();
+		const uniqueHistory = user.readingHistory.filter(entry => {
+			const bookId = entry.book?._id?.toString();
+			if (!bookId || seenBooks.has(bookId)) return false;
+			seenBooks.add(bookId);
+			return true;
+		});
+
 		// Format the data and limit to 6
-		const continueReading = user.readingHistory
+		const continueReading = uniqueHistory
 			.slice(0, 6)
 			.map((entry) => ({
 				bookId: entry.book?._id,
@@ -353,4 +362,5 @@ module.exports = {
 	updateProfile,
 	getUserBookmarks,
 	getReadingHistory,
+	getContinueReading
 };
