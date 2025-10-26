@@ -1,7 +1,7 @@
 const Book = require('../models/Book');
 const User = require('../models/User');
 
-async function getRecommendedBooks(userId = null, limit = 10) {
+async function getRecommendedBooks(userId = null, limit = 7) {
 	let recommendations = [];
 
 	if (userId) {
