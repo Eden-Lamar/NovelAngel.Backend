@@ -26,9 +26,12 @@ const addComment = async (req, res) => {
 			content
 		});
 
+		// Populate user before sending back
+		const populatedComment = await newComment.populate("user", "username avatar");
+
 		res.status(201).json({
 			status: "success",
-			data: newComment
+			data: populatedComment
 		});
 	} catch (error) {
 		res.status(500).json({
