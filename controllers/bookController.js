@@ -153,7 +153,7 @@ const getBookComments = async (req, res) => {
 			.sort({ createdAt: -1 }) // Sort by latest
 			.skip(skip)
 			.limit(limit)
-			.populate('user', 'username'); // Populate user info (assuming you have user references)
+			.populate('user', 'username avatar'); // Populate user info (assuming you have user references)
 
 		res.status(200).json({
 			status: 'success',
