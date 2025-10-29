@@ -36,7 +36,7 @@ const registerUser = async (req, res) => {
 		const formattedUsername = username.replaceAll(" ", "_");
 		// Create user
 		const user = await User.create({
-			formattedUsername,
+			username: formattedUsername,
 			email,
 			password: hashedPassword,
 			role
