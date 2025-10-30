@@ -7,7 +7,7 @@ const userSchema = new Schema({
 		trim: true,
 		required: [true, "Username is a Required field"],
 		minLength: 3,
-		maxLength: 20,
+		maxLength: 30,
 		// lowercase: true,
 		unique: true
 	},
@@ -22,10 +22,17 @@ const userSchema = new Schema({
 	},
 	password: {
 		type: String,
-		required: [true, "Password is a Required field"],
 		minLength: 8,
 		maxLength: 255,
 		trim: true,
+		// Only required if not using Google (or any OAuth)
+		required: function () {
+			return !this.googleId; // If there's no Google ID, password is required
+		},
+	},
+	googleId: {
+		type: String,
+		default: null,
 	},
 	role: {
 		type: String,
