@@ -3,6 +3,7 @@ const express = require("express");
 const morgan = require("morgan");
 const cors = require("cors");
 const bodyParser = require('body-parser');  // We use this instead of express.json() for raw body capture
+const passport = require("passport");
 require("dotenv").config();
 const connectDB = require("./config/db");
 const indexRouter = require('./routes/index');
@@ -24,6 +25,8 @@ app.use(
 );
 app.use(cors(corsOptions));
 app.use(morgan("dev"));
+app.use(passport.initialize());
+
 
 // ROUTES MIDDLEWARE
 app.use('/', indexRouter);
