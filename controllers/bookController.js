@@ -30,7 +30,7 @@ const searchBooks = async (req, res) => {
 
 		// 4. Filter by Category (Exact Match)
 		if (category) {
-			const decodedCategory = category.replace(/\+/g, " "); // convert + → space
+			const decodedCategory = decodeURIComponent(category.trim()).replace(/\+/g, " ").trim(); // convert + → space
 			query.category = { $regex: `^${decodedCategory}$`, $options: 'i' };
 		}
 
