@@ -30,7 +30,8 @@ const searchBooks = async (req, res) => {
 
 		// 4. Filter by Category (Exact Match)
 		if (category) {
-			query.category = { $regex: `^${category}$`, $options: 'i' };
+			const decodedCategory = category.replace(/\+/g, " "); // convert + → space
+			query.category = { $regex: `^${decodedCategory}$`, $options: 'i' };
 		}
 
 		// 5. Filter by Tags (All Specified Tags Must Match)
