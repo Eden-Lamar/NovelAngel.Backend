@@ -31,7 +31,7 @@ const bookSchema = new Schema({
 
 	category: {
 		type: String,
-		enum: ['BL', 'GL', 'BG'],
+		enum: ['BL', 'GL', 'BG', 'No CP'],
 		default: 'BL', // Default value for category
 		// required: [true, "category is a Required field"]
 	},
