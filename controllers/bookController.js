@@ -251,12 +251,27 @@ const getChapterById = async (req, res) => {
 		}
 
 		let canAccess = !chapter.isLocked;
+		let user = null; // Initialize user
+
+		// If a user is logged in, check their role and unlocks
 		if (userId) {
-			const user = await User.findById(userId).select('unlockedChapters');
-			if (chapter.isLocked && user.unlockedChapters.includes(chapter._id)) {
-				canAccess = true;
+			// ✅ Fetch role, unlockedChapters, and readingHistory
+			// We need all these fields for logic within this function.
+			user = await User.findById(userId).select('unlockedChapters role readingHistory');
+
+			if (user) {
+				// 1.  Grant access if user is an 'admin'
+				if (user.role === 'admin') {
+					canAccess = true;
+				}	// 2. Grant access if chapter is locked BUT user has unlocked it
+				else if (chapter.isLocked && user.unlockedChapters.includes(chapter._id)) {
+					canAccess = true;
+				}
+
 			}
 		}
+
+		// If the chapter is locked and the user cannot access it, return limited info
 		if (!canAccess) {
 			return res.status(200).json({
 				status: 'locked',
@@ -284,9 +299,7 @@ const getChapterById = async (req, res) => {
 		}
 
 		// Track reading history for logged-in users
-		if (userId) {
-			const user = await User.findById(userId);
-
+		if (user) {
 			// Check if the chapter is already in the user's reading history
 			const existingIndex = user.readingHistory.findIndex(
 				(history) => history.lastChapterRead.toString() === chapterId
@@ -362,11 +375,20 @@ const unlockChapter = async (req, res) => {
 		}
 
 		// Find the user
-		const user = await User.findById(userId).select("coinBalance unlockedChapters");;
+		// Also select the 'role' field
+		const user = await User.findById(userId).select("coinBalance unlockedChapters role");
 		if (!user) {
 			return res.status(404).json({
 				status: 'fail',
 				message: 'User not found'
+			});
+		}
+
+		// Add check to prevent admins from unlocking
+		if (user.role === 'admin') {
+			return res.status(403).json({
+				status: 'fail',
+				message: 'Admins do not need to unlock chapters, access is free'
 			});
 		}
 
