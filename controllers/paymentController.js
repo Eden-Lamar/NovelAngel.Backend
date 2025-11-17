@@ -115,80 +115,111 @@ const flutterwaveWebhook = async (req, res) => {
 	const { event, data } = req.body;
 	console.log("Webhook event:", event, "Status:", data?.status);
 
-	if (event === "charge.completed" && data.status === "successful") {
-		try {
-			// Verify transaction
-			console.log("Verifying transaction ID:", data.id);
-			const verified = await flw.Transaction.verify({ id: data.id });
+	if (event === "charge.completed") {
+		// Handle SUCCESSFUL charges
+		if (data.status === "successful") {
+			try {
+				// Verify transaction
+				console.log("Verifying transaction ID:", data.id);
+				const verified = await flw.Transaction.verify({ id: data.id });
 
-			if (verified.data.status === "successful") {
-				console.log("Transaction verified:", verified.data);
+				if (verified.data.status === "successful") {
+					console.log("Transaction verified:", verified.data);
 
-				// Atomic update: Find and update in one operation
-				const transaction = await Transaction.findOneAndUpdate(
-					{
-						tx_ref: verified.data.tx_ref,
-						status: "initiated" // Only match if STILL initiated
-					},
-					{
-						$set: { status: "processing" } // Temporarily lock it so two webhook calls can’t double-credit the same transaction.
-					},
-					{
-						new: false // Return the original document (before update)
-					}
-				);
+					// Atomic update: Find and update in one operation
+					const transaction = await Transaction.findOneAndUpdate(
+						{
+							tx_ref: verified.data.tx_ref,
+							status: "initiated" // Only match if STILL initiated
+						},
+						{
+							$set: { status: "processing" } // Temporarily lock it so two webhook calls can’t double-credit the same transaction.
+						},
+						{
+							new: false // Return the original document (before update)
+						}
+					);
 
-				if (!transaction) {
-					console.log("Transaction already processed or not found:", verified.data.tx_ref);
-					return res.status(200).end();
-				}
-
-				console.log("Transaction locked for processing:", transaction);
-
-				// Check amount/currency (on the original transaction)
-				if (Math.abs(verified.data.amount - transaction.amount) < 0.01 && verified.data.currency === transaction.currency) {
-					// Credit coins
-					const user = await User.findById(transaction.user);
-					if (!user) {
-						console.log("User not found for ID:", transaction.user);
-						// Roll back status to initiated if needed, but for simplicity, leave as processing
+					if (!transaction) {
+						console.log("Transaction already processed or not found:", verified.data.tx_ref);
 						return res.status(200).end();
 					}
-					console.log("Before update - User coinBalance:", user.coinBalance);
-					const updatedUser = await User.findByIdAndUpdate(
-						transaction.user,
-						{ $inc: { coinBalance: transaction.coins } },
-						{ new: true }
-					);
-					console.log("After update - User coinBalance:", updatedUser.coinBalance);
 
-					// Update transaction to successful
-					// Use updateOne instead of save() for final status
-					const updatedTransaction = await Transaction.updateOne(
-						{ _id: transaction._id },
-						{ status: "successful", transaction_id: verified.data.id }
-					);
-					console.log("Transaction updated:", updatedTransaction);
+					console.log("Transaction locked for processing:", transaction);
+
+					// Check amount/currency (on the original transaction)
+					if (Math.abs(verified.data.amount - transaction.amount) < 0.01 && verified.data.currency === transaction.currency) {
+						// Credit coins
+						const user = await User.findById(transaction.user);
+						if (!user) {
+							console.log("User not found for ID:", transaction.user);
+							// Roll back status to initiated if needed, but for simplicity, leave as processing
+							return res.status(200).end();
+						}
+						console.log("Before update - User coinBalance:", user.coinBalance);
+						const updatedUser = await User.findByIdAndUpdate(
+							transaction.user,
+							{ $inc: { coinBalance: transaction.coins } },
+							{ new: true }
+						);
+						console.log("After update - User coinBalance:", updatedUser.coinBalance);
+
+						// Update transaction to successful
+						// Use updateOne instead of save() for final status
+						const updatedTransaction = await Transaction.updateOne(
+							{ _id: transaction._id },
+							{ status: "successful", transaction_id: verified.data.id }
+						);
+						console.log("Transaction updated:", updatedTransaction);
+					} else {
+						console.log("Transaction mismatch - Amount or currency", {
+							verifiedAmount: verified.data.amount,
+							transactionAmount: transaction.amount,
+							verifiedCurrency: verified.data.currency,
+							transactionCurrency: transaction.currency,
+						});
+						// Roll back to initiated if mismatch
+						await Transaction.updateOne({ _id: transaction._id }, { status: "initiated" });
+					}
 				} else {
-					console.log("Transaction mismatch - Amount or currency", {
-						verifiedAmount: verified.data.amount,
-						transactionAmount: transaction.amount,
-						verifiedCurrency: verified.data.currency,
-						transactionCurrency: transaction.currency,
-					});
-					// Roll back to initiated if mismatch
-					await Transaction.updateOne({ _id: transaction._id }, { status: "initiated" });
+					console.log("Verification failed:", verified.data.status);
 				}
-			} else {
-				console.log("Verification failed:", verified.data.status);
+			} catch (error) {
+				console.error("Webhook 'successful' block error:", error.message);
 			}
-		} catch (error) {
-			console.error("Webhook error:", error.message);
+
+		} else if (data.status === "failed") {
+			try {
+				const { tx_ref, id } = data;
+				console.log("Processing failed transaction:", tx_ref);
+
+				// Find the transaction and update its status to 'failed'
+				const transaction = await Transaction.findOneAndUpdate(
+					{ tx_ref: tx_ref, status: "initiated" }, // Only update if it's still initiated
+					{ $set: { status: "failed", transaction_id: id } },
+					{ new: true }
+				);
+
+				if (transaction) {
+					console.log("Transaction marked as failed:", tx_ref);
+				} else {
+					console.log("Failed transaction already processed or not found:", tx_ref);
+				}
+			} catch (error) {
+				console.error("Webhook 'failed' block error:", error.message);
+			}
+
+		} else {
+			// Handle other statuses like 'pending', 'abandoned' etc.
+			console.log(`Webhook: Charge completed but status is '${data.status}', not processing.`);
 		}
+
 	} else {
-		console.log("Webhook skipped: Not charge.completed or not successful", { event, status: data?.status });
+		// Log other events but don't process them
+		console.log(`Webhook skipped: Event is not 'charge.completed' (Event: ${event})`);
 	}
 
+	// Always send a 200 OK to Flutterwave to stop retries
 	res.status(200).end();
 };
 
