@@ -26,7 +26,7 @@ router.get(
 	(req, res) => {
 		const token = generateToken(req.user._id);
 		// Redirect to frontend with JWT
-		res.redirect(`http://localhost:3002/login?token=${token}`);
+		res.redirect(`${process.env.FRONTEND_USER_URL}/login?token=${token}`);
 	}
 );
 
