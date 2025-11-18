@@ -2,11 +2,19 @@ const cron = require("node-cron");
 const Book = require("../models/Book.js");
 const Chapter = require("../models/Chapter");
 
+const isEnabled = process.env.ENABLE_CHAPTER_UNLOCK === "true";
+
+if (!isEnabled) {
+	console.log("⏸️  Chapter unlock job is DISABLED (via ENV)");
+	return; // stop loading cron
+}
+
+console.log("⏰ Daily unlock job ENABLED! Will unlock one chapter per book every day at midnight (Africa/Lagos)\n");
 
 // Run once a day at midnight (WAT – Africa/Lagos)
 cron.schedule("0 0 * * *", async () => {
 	try {
-		console.log("⏰ Running daily chapter unlock job...");
+		console.log("🔔 Running daily chapter unlock job...");
 
 		// Get all books
 		const books = await Book.find().populate("chapters");
@@ -59,5 +67,3 @@ cron.schedule("0 0 * * *", async () => {
 	}
 
 );
-
-console.log("⏰ Daily unlock job scheduled: unlocks one chapter per book every day at midnight (Africa/Lagos)");
