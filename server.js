@@ -9,7 +9,7 @@ const connectDB = require("./config/db");
 const indexRouter = require('./routes/index');
 
 const app = express();
-const port = process.env.PORT || 8080;
+const PORT = process.env.PORT || 5000;
 
 const corsOptions = {
 	exposedHeaders: 'Authorization',
@@ -62,6 +62,6 @@ connectDB().then(() => {
 });
 
 // create Server
-app.listen(port, () => {
-	console.log(`\nServer up on port ${port}...\n`);
+app.listen(PORT, () => {
+	console.log(`\nServer up on port ${PORT}...\n`);
 });
