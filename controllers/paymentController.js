@@ -62,7 +62,7 @@ const buyCoins = async (req, res) => {
 			tx_ref,
 			amount,
 			currency: 'USD',
-			redirect_url: `${process.env.APP_URL}/payment/callback?origin=${originPort}`, // Redirects to callback route Adjust to your callback URL
+			redirect_url: `${process.env.API_URL}/payment/callback?origin=${originPort}`, // Redirects to callback route Adjust to your callback URL
 			payment_options: 'card,ussd,banktransfer',
 			customer: {
 				email: user.email,
