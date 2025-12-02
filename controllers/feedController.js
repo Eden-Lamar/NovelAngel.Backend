@@ -25,10 +25,15 @@ const getRSSFeed = async (req, res) => {
 		});
 
 		// 2. Query the DB for the latest chapters
-		// We filter for isLocked: false because NU usually links to free chapters.
-		const chapters = await Chapter.find({ isLocked: false })
-			.sort({ createdAt: -1 }) // Sort by newest first
-			.limit(20) // Limit to 20 items (standard for RSS)
+		// . isLocked: false (only free chapters)
+		// . releasedAt: { $ne: null } (ensure it has a release date)
+		// . sort: releasedAt: -1 (Newest release first, regardless of when it was uploaded)
+		const chapters = await Chapter.find({
+			isLocked: false,
+			releasedAt: { $ne: null }
+		})
+			.sort({ releasedAt: -1 }) // Sort by newest first
+			.limit(50) // Limit to 50 items (standard for RSS)
 			.populate('book', 'title author bookImage') // We need the Book title for the RSS item title
 			.exec();
 
@@ -53,8 +58,8 @@ const getRSSFeed = async (req, res) => {
 					// Author name
 					author: chapter.book.author,
 
-					// Date published
-					date: chapter.createdAt
+					// Date made free
+					date: chapter.releasedAt || chapter.createdAt
 				});
 			}
 		});
