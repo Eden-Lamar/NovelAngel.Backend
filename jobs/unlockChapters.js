@@ -42,6 +42,7 @@ cron.schedule("0 0 * * *", async () => {
 			if (chapterToUnlock) {
 				await Chapter.findByIdAndUpdate(chapterToUnlock._id, {
 					isLocked: false,
+					releasedAt: new Date() // <--- THIS triggers the "New Release" for RSS
 				});
 
 				// Update safeguard timestamp
