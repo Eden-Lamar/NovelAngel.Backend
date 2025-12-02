@@ -30,12 +30,12 @@ const chapterSchema = new Schema({
 		type: Boolean,
 		default: false
 	}, // Free or locked chapter
-	
+
 	coinCost: {
-    type: Number,
-    default: 0,
-    min: 0
-  }, // Cost in coins to unlock
+		type: Number,
+		default: 0,
+		min: 0
+	}, // Cost in coins to unlock
 
 	lockedAt: {
 		type: Date,
@@ -52,10 +52,26 @@ const chapterSchema = new Schema({
 	// 	ref: 'Comment'
 	// }],
 
+	releasedAt: {
+		type: Date,
+		default: null, // Default to null. We set this when it becomes free.
+		index: true    // Add index for faster sorting in the RSS feed
+	},
+
 	uploadedBy: {
 		type: Schema.Types.ObjectId,
 		ref: 'User'
 	},
 }, { timestamps: true });
+
+// Pre-save hook
+// If a chapter is created/updated as FREE (isLocked: false) and has no releasedAt date,
+// set releasedAt to NOW.
+chapterSchema.pre('save', function (next) {
+	if (!this.isLocked && !this.releasedAt) {
+		this.releasedAt = new Date();
+	}
+	next();
+});
 
 module.exports = mongoose.model('Chapter', chapterSchema);
