@@ -15,6 +15,9 @@ const corsOptions = {
 	exposedHeaders: 'Authorization',
 };
 
+// TRUST PROXY (for correct HTTPS detection behind proxies)
+app.set("trust proxy", 1);
+
 // APPLICATION MIDDLEWARE
 app.use(
 	bodyParser.json({
