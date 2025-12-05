@@ -7,7 +7,12 @@ passport.use(
 		{
 			clientID: process.env.GOOGLE_CLIENT_ID,
 			clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-			callbackURL: "/api/v1/user/auth/google/callback",
+			// 1. Logic to use the full HTTPS URL in production, relative in dev
+			callbackURL: process.env.NODE_ENV === 'production'
+				? `${process.env.FRONTEND_USER_URL}/api/v1/user/auth/google/callback`
+				: "/api/v1/user/auth/google/callback",
+			// 2. IMPORTANT: Trust the proxy so it knows it's HTTPS
+			proxy: true,
 		},
 		async (accessToken, refreshToken, profile, done) => {
 			try {
