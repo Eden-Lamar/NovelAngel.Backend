@@ -9,7 +9,7 @@ passport.use(
 			clientSecret: process.env.GOOGLE_CLIENT_SECRET,
 			// 1. Logic to use the full HTTPS URL in production, relative in dev
 			callbackURL: process.env.NODE_ENV === 'production'
-				? `${process.env.FRONTEND_USER_URL}/api/v1/user/auth/google/callback`
+				? `${process.env.API_URL}/api/v1/user/auth/google/callback`
 				: "/api/v1/user/auth/google/callback",
 			// 2. IMPORTANT: Trust the proxy so it knows it's HTTPS
 			proxy: true,
