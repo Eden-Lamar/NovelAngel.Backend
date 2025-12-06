@@ -7,7 +7,7 @@ const chapterSchema = new Schema({
 		required: [true, "title is a Required field"],
 		trim: true,
 		lowercase: true,
-		maxLength: 80,
+		maxLength: 1000,
 	},
 
 	content: {
