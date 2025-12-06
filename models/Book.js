@@ -8,7 +8,7 @@ const bookSchema = new Schema({
 		trim: true,
 		lowercase: true,
 		minLength: 6,
-		maxLength: 80,
+		maxLength: 1000,
 	},
 
 	author: {
@@ -17,7 +17,7 @@ const bookSchema = new Schema({
 		required: [true, "Author is a Required field"],
 		// lowercase: true,
 		minLength: 3,
-		maxLength: 50,
+		maxLength: 100,
 	},
 
 	description: {
@@ -26,7 +26,7 @@ const bookSchema = new Schema({
 		trim: true,
 		lowercase: true,
 		minLength: 20,
-		maxLength: 1000,
+		maxLength: 3000,
 	},
 
 	category: {
