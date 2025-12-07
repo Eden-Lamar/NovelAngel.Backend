@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const { addBook, updateBook, deleteBook, addChapter, updateChapter, deleteChapter, getDashboardStats } = require('../../controllers/adminController');
+const { addBook, updateBook, deleteBook, getChapter, addChapter, updateChapter, deleteChapter, getDashboardStats } = require('../../controllers/adminController');
 const { protect, admin } = require('../../middlewares/authMiddleware');
 
 const router = express.Router();
@@ -17,6 +17,7 @@ router.put('/books/:bookId', protect, admin, upload.single('bookImage'), updateB
 router.delete('/books/:bookId', protect, admin, deleteBook); // Delete a book
 
 // Admin can upload chapters
+router.get("/chapters/:chapterId", protect, admin, getChapter); // Get a single chapter
 router.post("/books/:bookId/chapters", protect, admin, addChapter); // Add a new chapter
 router.put('/chapters/:chapterId', protect, admin, updateChapter);  // Update a chapter
 router.delete('/books/:bookId/chapters/:chapterId', protect, admin, deleteChapter); // Delete a chapter

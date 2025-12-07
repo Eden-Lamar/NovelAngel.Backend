@@ -166,6 +166,35 @@ const deleteBook = async (req, res) => {
 	}
 };
 
+// @description: Get single chapter details
+// @route GET /api/v1/admin/chapters/:chapterId
+// @access private (Admin)
+const getChapter = async (req, res) => {
+	const { chapterId } = req.params;
+
+	try {
+		const chapter = await Chapter.findById(chapterId).select("title content chapterNo isLocked coinCost book").populate("book", "title");
+
+		if (!chapter) {
+			return res.status(404).json({
+				status: "fail",
+				error: "Chapter not found",
+			});
+		}
+
+		res.status(200).json({
+			status: "success",
+			data: chapter,
+		});
+	} catch (error) {
+		res.status(500).json({
+			status: "fail",
+			error: error.message,
+		});
+	}
+};
+
+
 
 // @description: Add new chapter
 // @route POST /api/v1/admin/books/:bookId/chapters
@@ -333,4 +362,4 @@ const getDashboardStats = async (req, res) => {
 	}
 };
 
-module.exports = { addBook, addChapter, updateBook, deleteBook, updateChapter, deleteChapter, getDashboardStats };
+module.exports = { addBook, addChapter, updateBook, deleteBook, getChapter, updateChapter, deleteChapter, getDashboardStats };
