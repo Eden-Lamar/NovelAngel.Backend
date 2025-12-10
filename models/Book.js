@@ -6,7 +6,7 @@ const bookSchema = new Schema({
 		type: String,
 		required: [true, "title is a Required field"],
 		trim: true,
-		lowercase: true,
+		// lowercase: true,
 		minLength: 6,
 		maxLength: 1000,
 	},
