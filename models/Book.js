@@ -24,7 +24,7 @@ const bookSchema = new Schema({
 		type: String,
 		required: [true, "description is a Required field"],
 		trim: true,
-		lowercase: true,
+		// lowercase: true,
 		minLength: 20,
 		maxLength: 3000,
 	},
