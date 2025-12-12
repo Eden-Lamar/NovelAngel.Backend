@@ -316,7 +316,7 @@ const getContinueReading = async (req, res) => {
 			});
 		}
 
-		// ✅ Deduplicate — keep latest chapter per book
+		// Deduplicate — keep latest chapter per book
 		const seenBooks = new Set();
 		const uniqueHistory = user.readingHistory.filter(entry => {
 			const bookId = entry.book?._id?.toString();
