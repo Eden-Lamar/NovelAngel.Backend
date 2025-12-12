@@ -56,13 +56,19 @@ const buyCoins = async (req, res) => {
 
 		// Determine origin port for redirect_url
 		const userOrigin = req.get('Origin') || req.get('Referer') || '';
-		const originPort = userOrigin.includes('3002') ? '3002' : '3001';
+
+		// Check if the request came from the User App URL defined in your .env
+		// This works for both local (localhost:3002) and prod (https://user-app.vercel.app)
+		// assuming FRONTEND_USER_URL is set correctly in .env
+		const isUserApp = userOrigin.includes(process.env.FRONTEND_USER_URL) || userOrigin.includes('3002');
+
+		const sourceApp = isUserApp ? 'user' : 'admin';
 
 		const payload = {
 			tx_ref,
 			amount,
 			currency: 'USD',
-			redirect_url: `${process.env.API_URL}/payment/callback?origin=${originPort}`, // Redirects to callback route Adjust to your callback URL
+			redirect_url: `${process.env.API_URL}/payment/callback?source=${sourceApp}`, // Redirects to callback route Adjust to your callback URL
 			payment_options: 'card,ussd,banktransfer',
 			customer: {
 				email: user.email,
