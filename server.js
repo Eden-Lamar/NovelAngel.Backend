@@ -36,13 +36,22 @@ app.use('/', indexRouter);
 
 // PAYMENT CALLBACK ROUTE (for Postman testing, and frontend)
 app.get("/payment/callback", (req, res) => {
-	const { status, tx_ref, transaction_id, origin } = req.query;
-	console.log("Payment callback:", { status, tx_ref, transaction_id });
+	const { status, tx_ref, transaction_id, source } = req.query;
+	console.log("Payment callback:", { status, tx_ref, transaction_id, source });
 
-	const port = (origin === '3002') ? '3002' : '3001';
-	const baseUrl = (port === '3002') ? process.env.FRONTEND_USER_URL : process.env.FRONTEND_URL;
+	// Select the correct base URL based on the 'source' flag we passed earlier
+  let baseUrl;
+  if (source === 'user') {
+      baseUrl = process.env.FRONTEND_USER_URL; // e.g., https://novelangel.com
+  } else {
+      baseUrl = process.env.FRONTEND_URL; // e.g., https://admin.novelangel.com
+  }
 
-	console.log("Base URL:", baseUrl);
+  // Fallback if env vars are missing (optional safety)
+  if (!baseUrl) {
+      console.error("Missing frontend URL in .env");
+      return res.status(500).send("Server Configuration Error");
+  }
 
 	// Build query parameters
 	const params = new URLSearchParams({
