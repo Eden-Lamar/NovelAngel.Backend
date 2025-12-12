@@ -255,7 +255,7 @@ const getChapterById = async (req, res) => {
 
 		// If a user is logged in, check their role and unlocks
 		if (userId) {
-			// ✅ Fetch role, unlockedChapters, and readingHistory
+			// Fetch role, unlockedChapters, and readingHistory
 			// We need all these fields for logic within this function.
 			user = await User.findById(userId).select('unlockedChapters role readingHistory');
 
@@ -300,20 +300,22 @@ const getChapterById = async (req, res) => {
 
 		// Track reading history for logged-in users
 		if (user) {
-			// Check if the chapter is already in the user's reading history
-			const existingIndex = user.readingHistory.findIndex(
-				(history) => history.lastChapterRead.toString() === chapterId
+			// Check if the BOOK is already in the user's reading history
+			const existingBookIndex = user.readingHistory.findIndex(
+				(history) => history.book.toString() === bookId.toString()
 			);
 
-			if (existingIndex !== -1) {
+			// If the book exists, remove the old entry so we can move it to the top
+			if (existingBookIndex !== -1) {
 				// Remove the chapter from its current position
-				user.readingHistory.splice(existingIndex, 1);
+				user.readingHistory.splice(existingBookIndex, 1);
 			}
 
 			// add a new entry for the book in reading history
 			user.readingHistory.unshift({
 				book: bookId,
 				lastChapterRead: chapterId,
+				createdAt: new Date() // Ensure timestamp is updated
 			});
 
 			// Limit the readingHistory to 10 items
