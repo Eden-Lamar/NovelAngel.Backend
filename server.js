@@ -1,5 +1,6 @@
 // APPLICATION IMPORTS
 const express = require("express");
+const mongoose = require("mongoose");
 const morgan = require("morgan");
 const cors = require("cors");
 const bodyParser = require('body-parser');  // We use this instead of express.json() for raw body capture
@@ -30,6 +31,17 @@ app.use(cors(corsOptions));
 app.use(morgan("dev"));
 app.use(passport.initialize());
 
+// @description: Health Check Endpoint
+// @route GET /health
+app.get('/health', (req, res) => {
+	const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
+	res.status(200).json({
+		server: 'UP',
+		database: dbStatus, // 0=disconnected, 1=connected, 2=connecting
+		timestamp: new Date()
+	});
+});
+
 
 // ROUTES MIDDLEWARE
 app.use('/', indexRouter);
@@ -40,18 +52,18 @@ app.get("/payment/callback", (req, res) => {
 	console.log("Payment callback:", { status, tx_ref, transaction_id, source });
 
 	// Select the correct base URL based on the 'source' flag we passed earlier
-  let baseUrl;
-  if (source === 'user') {
-      baseUrl = process.env.FRONTEND_USER_URL; // e.g., https://novelangel.com
-  } else {
-      baseUrl = process.env.FRONTEND_URL; // e.g., https://admin.novelangel.com
-  }
+	let baseUrl;
+	if (source === 'user') {
+		baseUrl = process.env.FRONTEND_USER_URL; // e.g., https://novelangel.com
+	} else {
+		baseUrl = process.env.FRONTEND_URL; // e.g., https://admin.novelangel.com
+	}
 
-  // Fallback if env vars are missing (optional safety)
-  if (!baseUrl) {
-      console.error("Missing frontend URL in .env");
-      return res.status(500).send("Server Configuration Error");
-  }
+	// Fallback if env vars are missing (optional safety)
+	if (!baseUrl) {
+		console.error("Missing frontend URL in .env");
+		return res.status(500).send("Server Configuration Error");
+	}
 
 	// Build query parameters
 	const params = new URLSearchParams({
