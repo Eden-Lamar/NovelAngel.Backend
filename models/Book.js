@@ -26,7 +26,7 @@ const bookSchema = new Schema({
 		trim: true,
 		// lowercase: true,
 		minLength: 20,
-		maxLength: 3000,
+		maxLength: 6000,
 	},
 
 	category: {
