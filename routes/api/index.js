@@ -8,5 +8,6 @@ router.use("/", require("./commentRoute"))
 router.use("/", require("./bookRoute"))
 router.use("/payments", require("./paymentsRoute"))
 router.use("/feed", require("./feedRoute"))
+router.use("/agent", require("./agentRoute"))
 
 module.exports = router
