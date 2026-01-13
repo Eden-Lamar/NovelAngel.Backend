@@ -20,6 +20,7 @@
 	"homepage": "https://github.com/Eden-Lamar/NovelAngel.Backend#readme",
 	"dependencies": {
 		"@aws-sdk/client-s3": "^3.658.1",
+		"@google/genai": "^1.34.0",
 		"axios": "^1.12.2",
 		"bcryptjs": "^2.4.3",
 		"body-parser": "^2.2.0",
@@ -35,6 +36,9 @@
 		"node-cron": "^4.2.1",
 		"passport": "^0.7.0",
 		"passport-google-oauth20": "^2.0.0",
+		"puppeteer": "^24.34.0",
+		"puppeteer-extra": "^3.3.6",
+		"puppeteer-extra-plugin-stealth": "^2.11.2",
 		"rss": "^1.2.2",
 		"sharp": "^0.33.5"
 	}
