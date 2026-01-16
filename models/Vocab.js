@@ -20,14 +20,6 @@ const vocabSchema = new Schema({
 		type: String,
 		required: true,
 		trim: true
-	},
-
-	// Optional: "Character", "Location", "Item", "Skill"
-	// This helps the AI understand context better
-	type: {
-		type: String,
-		enum: ['Character', 'Location', 'Item', 'Skill', 'General'],
-		default: 'General'
 	}
 }, { timestamps: true });
 
