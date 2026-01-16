@@ -9,5 +9,6 @@ router.use("/", require("./bookRoute"))
 router.use("/payments", require("./paymentsRoute"))
 router.use("/feed", require("./feedRoute"))
 router.use("/agent", require("./agentRoute"))
+router.use("/vocab", require("./vocabRoutes"))
 
 module.exports = router
