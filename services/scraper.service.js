@@ -1,133 +1,105 @@
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());
-
-// List of random user agents to rotate identity
-const userAgents = [
-	'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-	'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
-	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
-];
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 const scrapeChapter = async (url) => {
-	let browser;
 	try {
-		browser = await puppeteer.launch({
-			headless: false, // Keep it visible
-			args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1280,800'],
-			defaultViewport: null
-		});
+		const ZENROWS_API_KEY = process.env.ZENROWS_API_KEY;
+		if (!ZENROWS_API_KEY) throw new Error("Missing ZENROWS_API_KEY in .env");
 
-		const page = await browser.newPage();
+		console.log(`Scrapping...`);
 
-		// 2. Set Random User Agent
-		const randomAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
-		await page.setUserAgent(randomAgent);
+		// We use ZenRows 'js_instructions' to force the page to scroll to the bottom
+		// This triggers the lazy-loading of the text (replacing your autoScroll function)
+		const jsInstructions = [
+			{ "scroll_y": 10000 }, // Scroll down deep
+			{ "wait": 3000 } // Wait 1s for text to appear
+		];
 
-		console.log(`Opening page: ${url}`);
-
-		// CHANGE 1: 'domcontentloaded' is much faster than 'networkidle2'
-		// It fires as soon as the HTML is ready, ignoring the background ads.
-		// We try to go to the page. If it "times out" (network idle), we assume it might just be a slow ad loading 
-		// and proceed to check the content selector anyway.
-		try {
-			await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-		} catch (e) {
-			console.log("Navigation warning: Page loading might be incomplete, but checking for content anyway...");
-		}
-
-		// CHANGE 2: Immediately look for the text box.
-		console.log("Checking for novel content...");
-
-		// 1. Wait for the Text Container
-		await page.waitForSelector('.txtnav', { timeout: 30000 });
-
-		// 2. CRITICAL FIX: Scroll to Bottom to trigger lazy loading
-		console.log("Scrolling to load full content...");
-		await autoScroll(page);
-
-		// 4. Extract Data
-		const data = await page.evaluate(() => {
-			const titleElement = document.querySelector('h1');
-			const title = titleElement ? titleElement.innerText.trim() : "No Title";
-			const contentElement = document.querySelector('.txtnav');
-
-			// Find the "Next Chapter" Link
-			// 69shuba often uses .page1 or just simple 'a' tags at bottom
-			let nextUrl = null;
-			const links = Array.from(document.querySelectorAll('a'));
-			for (let link of links) {
-				if (link.innerText.includes("下一章") || link.innerText.includes("Next Chapter")) {
-					nextUrl = link.href;
-					break;
-				}
+		const { data: html } = await axios({
+			url: 'https://api.zenrows.com/v1/',
+			method: 'GET',
+			params: {
+				'apikey': ZENROWS_API_KEY.trim(),
+				'url': url,
+				'js_render': 'true', // Required for 69shuba's dynamic content
+				'antibot': 'true',   // Bypass Cloudflare
+				'premium_proxy': 'true', // Use residential IPs
+				'wait_for': '.txtnav',
+				'js_instructions': JSON.stringify(jsInstructions) // Perform the scroll
 			}
-
-			if (!contentElement) return null;
-
-			// Cleanup Garbage
-			const junkClasses = ['.txtinfo', '.hide720', 'div', 'script', '.ads', '.bottom-ad'];
-			junkClasses.forEach(cls => {
-				const junk = contentElement.querySelectorAll(cls);
-				junk.forEach(el => el.remove());
-			});
-
-			return {
-				title,
-				content: contentElement.innerText,
-				nextUrl
-			};
 		});
 
-		if (!data) throw new Error("Content Selector found, but content was empty.");
+		console.log("Parsing HTML...");
 
-		// 5. Cleanup Text
-		let cleanContent = data.content
+		// Load HTML into Cheerio (which works just like jQuery/document.querySelector)
+		const $ = cheerio.load(html);
+
+		// DEBUG: Check what page we actually got
+		const pageTitle = $('title').text().trim();
+		console.log(`Page Title found: "${pageTitle}"`);
+
+		// Extract Title
+		const title = $('h1').text().trim() || "No Title";
+
+		// Extract Content
+		// Remove garbage elements first
+		$('.txtinfo, .hide720, script, .ads, .bottom-ad, style').remove();
+
+		// PRESERVE PARAGRAPHS ---
+		// Cheerio .text() strips html tags. We want <br> to become newlines first.
+		$('.txtnav br').replaceWith('\n');
+		$('.txtnav p').after('\n');
+
+		let content = $('.txtnav').text().trim();
+
+		// Cleanup Text
+		content = content
 			.replace(/69书吧.*/g, '')
 			.replace(/\(本章完\)/g, '')
 			.trim();
 
-		// Safety Check: If content is suspiciously short (< 500 chars), warn us
-		if (cleanContent.length < 500) {
-			console.warn(`WARNING: Scraped content seems very short (${cleanContent.length} chars). Possible truncated scrape.`);
+		// Find Next URL
+		let nextUrl = null;
+		$('a').each((i, link) => {
+			const text = $(link).text();
+			if (text.includes("下一章") || text.includes("Next Chapter")) {
+				nextUrl = $(link).attr('href');
+				// 69shuba sometimes gives relative URLs (e.g., "/txt/123/456.html")
+				// We ensure it is absolute
+				if (nextUrl && !nextUrl.startsWith('http')) {
+					nextUrl = new URL(nextUrl, 'https://www.69shuba.com').href;
+				}
+			}
+		});
+
+		if (!content) {
+			// Log a snippet of the body to see what went wrong (is it a captcha?)
+			const bodySnippet = $('body').text().substring(0, 200).replace(/\n/g, ' ');
+			console.warn(`DEBUG: Body snippet: ${bodySnippet}`);
+			throw new Error(`ZenRows returned HTML, but .txtnav content was empty. Title was: ${pageTitle}`);
 		}
 
-		console.log(`Scraping successful! (${cleanContent.length} chars)`);
+		if (content.length < 500) {
+			console.warn(`WARNING: Content seems short (${content.length} chars).`);
+		}
+
+		console.log(`Scraping successful (${content.length} chars)`);
 
 		return {
-			title: data.title,
-			content: cleanContent,
-			nextUrl: data.nextUrl
+			title,
+			content,
+			nextUrl
 		};
 
 	} catch (error) {
+		// Better error logging for ZenRows responses
+		if (error.response) {
+			console.error(`ZenRows API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+			throw new Error(`ZenRows Failed: ${error.response.status}`);
+		}
 		console.error(`Scraping Error:`, error.message);
 		throw error;
-	} finally {
-		if (browser) await browser.close();
 	}
 };
-
-// Helper function to simulate human scrolling
-async function autoScroll(page) {
-	await page.evaluate(async () => {
-		await new Promise((resolve) => {
-			var totalHeight = 0;
-			var distance = 100;
-			var timer = setInterval(() => {
-				var scrollHeight = document.body.scrollHeight;
-				window.scrollBy(0, distance);
-				totalHeight += distance;
-
-				// Stop scrolling if we reached the bottom
-				if (totalHeight >= scrollHeight - window.innerHeight) {
-					clearInterval(timer);
-					resolve();
-				}
-			}, 100); // Scroll every 100ms
-		});
-	});
-}
 
 module.exports = { scrapeChapter };
