@@ -36,10 +36,12 @@ const autoTranslateChapter = async (req, res) => {
 		// We loop through any new vocab the AI found and save/update it in MongoDB
 		if (newVocabItems && newVocabItems.length > 0) {
 			console.log(`Step 3: Saving ${newVocabItems.length} new vocab items...`);
+
 			const vocabOperations = newVocabItems.map(item => ({
 				updateOne: {
 					filter: { book: bookId, original: item.original },
-					update: { $set: { translation: item.translation } },
+					// --- FIX: Use $setOnInsert to prevent overwriting existing words ---
+					update: { $setOnInsert: { translation: item.translation } },
 					upsert: true // Create if it doesn't exist, update if it does
 				}
 			}));
@@ -49,7 +51,7 @@ const autoTranslateChapter = async (req, res) => {
 
 			// MongoDB tells us exactly how many were "Upserted" (Created New)
 			trueNewVocabCount = bulkResult.upsertedCount;
-			console.log(`- Updated: ${bulkResult.modifiedCount}`);
+			console.log(`- Existing Ignored: ${bulkResult.matchedCount}`);
 			console.log(`- Created: ${trueNewVocabCount}`);
 		}
 
@@ -156,7 +158,8 @@ const bulkTranslateChapters = async (req, res) => {
 				const vocabOps = newVocabItems.map(item => ({
 					updateOne: {
 						filter: { book: bookId, original: item.original },
-						update: { $set: { translation: item.translation } },
+						// --- FIX: Use $setOnInsert to prevent overwriting existing words ---
+						update: { $setOnInsert: { translation: item.translation } },
 						upsert: true
 					}
 				}));
