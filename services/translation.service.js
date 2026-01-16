@@ -59,7 +59,7 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle)
 
 	// 3. RETRY LOOP (The "Self-Healing" Logic)
 	let lastError = null;
-	const MAX_ATTEMPTS = 3;
+	const MAX_ATTEMPTS = 5;
 
 	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 		try {
@@ -67,7 +67,7 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle)
 
 			// A. Make the Request
 			const response = await ai.models.generateContent({
-				model: "gemini-2.5-flash", // or gemini-3-flash-preview
+				model: "gemini-3-flash-preview", // or gemini-2.5-flash
 				config: {
 					systemInstruction: systemInstruction,
 					temperature: 0.3,
@@ -92,13 +92,25 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle)
 
 			// B. Extract Text
 			let rawText = null;
+
+			// Attempt 1: Use the SDK helper method (safely)
 			if (response.text && typeof response.text === 'function') {
-				rawText = response.text();
-			} else if (response.candidates && response.candidates[0].content) {
-				rawText = response.candidates[0].content.parts[0].text;
+				try {
+					rawText = response.text();
+				} catch (err) {
+					// If response was blocked, .text() might throw. We ignore and try manual extraction.
+				}
 			}
 
-			if (!rawText) throw new Error("Empty response from AI");
+			// Attempt 2: Manual Extraction (Safe Mode)
+			if (!rawText && response.candidates && response.candidates[0]) {
+				// We use ?. to safely access parts[0]
+				// If 'parts' is missing, this becomes undefined instead of crashing
+				const candidate = response.candidates[0];
+				rawText = candidate.content?.parts?.[0]?.text;
+			}
+
+			if (!rawText) throw new Error("Empty response from AI (Content might be blocked)");
 
 			// C. THE NEW GUARD DOG: Check for the End Tag
 			// If the AI didn't print ===END===, it was cut off. No guessing needed.
@@ -137,9 +149,16 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle)
 					const separator = line.includes('=') ? '=' : 'translates as';
 					if (line.includes(separator)) {
 						const parts = line.split(separator);
-						const original = parts[0].replace(/[<>]/g, '').trim();
-						const translation = parts[1].replace(/[<>]/g, '').trim();
-						if (original && translation) newVocabItems.push({ original, translation });
+
+						// --- FIX: Aggressively strip quotes from keys and values ---
+						// We remove ", ', <, >, and smart quotes “ ”
+						const original = parts[0].replace(/[<>“"”']/g, '').trim();
+						const translation = parts[1].replace(/[<>“"”']/g, '').trim();
+
+						// Only add if not empty
+						if (original && translation) {
+							newVocabItems.push({ original, translation });
+						}
 					}
 				});
 			}
@@ -159,7 +178,7 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle)
 			// --- SMART WAIT LOGIC ---
 			// If we still have attempts left, we need to wait before retrying.
 			if (attempt < MAX_ATTEMPTS) {
-				let waitTime = 5000; // Default: Wait 5 seconds for truncation/glitches
+				let waitTime = 65000; // Default: Wait 65 seconds for truncation/glitches
 
 				// If it's a Rate Limit (429) or Overload (503), wait MUCH longer
 				if (error.message.includes("429") || error.message.includes("quota") || error.message.includes("503")) {
