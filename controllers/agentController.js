@@ -2,7 +2,7 @@ const Book = require("../models/Book");
 const Chapter = require("../models/Chapter");
 const Vocab = require("../models/Vocab");
 const { scrapeChapter } = require("../services/scraper.service");
-const { translateChapter } = require("../services/translation.service");
+const { translateChapter, clearVocabCache, resetModelQuotaState } = require("../services/translation.service");
 
 // @description: Auto-translate and publish a single chapter
 // @route POST /api/v1/agent/single
@@ -51,6 +51,11 @@ const autoTranslateChapter = async (req, res) => {
 
 			// MongoDB tells us exactly how many were "Upserted" (Created New)
 			trueNewVocabCount = bulkResult.upsertedCount;
+
+			if (trueNewVocabCount > 0) {
+				clearVocabCache(bookId);
+			}
+
 			console.log(`- Existing Ignored: ${bulkResult.matchedCount}`);
 			console.log(`- Created: ${trueNewVocabCount}`);
 		}
@@ -106,12 +111,34 @@ const autoTranslateChapter = async (req, res) => {
 	}
 };
 
-// @description: Bulk translate chapters in a loop
+// @description: Bulk translate chapters in a loop with LIVE STREAMING logs
 // @route POST /api/v1/agent/bulk
 // @access Private (Admin)
 const bulkTranslateChapters = async (req, res) => {
 	// We accept a starting URL and a limit (e.g., do 5 chapters then stop)
 	let { bookId, startUrl, limit, coinCost, isLocked } = req.body;
+
+	// Setup Headers for Streaming
+	res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+	res.setHeader('Transfer-Encoding', 'chunked');
+
+	// Helper to stream JSON chunks to the frontend
+	const streamLog = (type, message, data = {}) => {
+		// Ensure we don't crash if connection closes
+		if (res.writableEnded) return;
+		const payload = JSON.stringify({ type, message, ...data });
+		res.write(payload + "\n"); // Newline is the delimiter
+	};
+
+	// --- 1. INITIALIZE ABORT CONTROLLER ---
+	const abortController = new AbortController();
+	const { signal } = abortController;
+
+	// --- 2. LISTEN FOR DISCONNECT ---
+	req.on('close', () => {
+		console.log("Client disconnected (Back button/Tab closed). Aborting...");
+		abortController.abort(); // <--- This fires the signal!
+	});
 
 	// Default limit to 1 if not specified, max 50 to prevent crashes
 	limit = limit || 1;
@@ -120,11 +147,20 @@ const bulkTranslateChapters = async (req, res) => {
 	let currentUrl = startUrl;
 	let successCount = 0;
 	let totalNewVocabLearned = 0; // <--- Track total new words across all chapters
+	let hasCriticalError = false; // <--- TRACKER FOR FAILURE
 	let logs = [];
 
 	try {
 		const book = await Book.findById(bookId);
-		if (!book) return res.status(404).json({ error: "Book not found" });
+		if (!book) {
+			streamLog("error", "Book not found");
+			res.end();
+			return;
+		}
+
+		streamLog("info", `Starting Mission: Translate ${limit} chapters for "${book.title}"`);
+
+		let vocabChanged = false;
 
 		// Send immediate response so the browser doesn't timeout
 		// We will process in the background (Conceptually. For now, we await to keep it simple).
@@ -133,100 +169,196 @@ const bulkTranslateChapters = async (req, res) => {
 
 		// START THE LOOP
 		for (let i = 0; i < limit; i++) {
-			if (!currentUrl) {
-				logs.push(`Stopped: No 'Next Chapter' URL found after ${i} chapters.`);
+			// --- 3. CHECK SIGNAL BEFORE STARTING LOOP ---
+			if (signal.aborted) {
+				logs.push("Process aborted by user.");
 				break;
 			}
 
+			if (!currentUrl) {
+				logs.push(`Stopped: No 'Next Chapter' URL found after ${i} chapters.`);
+				streamLog("warning", "Chain stopped: No 'Next Chapter' URL found.");
+				break;
+			}
+
+			// --- STEP 1: SCRAPING (10% Progress) ---
+			// We send (i + 0.1) so the bar moves a little bit immediately
+			streamLog("process", `[${i + 1}/${limit}] Scraping: ${currentUrl}`, { progress: i + 0.1, step: "scraping" });
 			console.log(`[${i + 1}/${limit}] Processing: ${currentUrl}`);
 
 			// A. Scrape (Now returns nextUrl!)
-			const { title: chineseTitle, content: chineseContent, nextUrl } = await scrapeChapter(currentUrl);
+			try {
+				const { title: chineseTitle, content: chineseContent, nextUrl } = await scrapeChapter(currentUrl);
+				streamLog("info", `Title found: "${chineseTitle}"`);
 
-			// B. Translate
-			const { translatedTitle, translatedContent, newVocabItems } = await translateChapter(
-				chineseTitle,
-				chineseContent,
-				bookId,
-				book.title
-			);
+				// --- CHECK SIGNAL AFTER SCRAPING ---
+				if (signal.aborted) break;
 
-			// C. Save Vocab
-			let chapterNewVocabCount = 0;
+				// B. Translate
+				// --- STEP 2: TRANSLATING (Started) (20% Progress) ---
+				streamLog("process", `content: (${chineseContent.length} chars)...`, { progress: i + 0.2, step: "translating" });
 
-			if (newVocabItems.length > 0) {
-				const vocabOps = newVocabItems.map(item => ({
-					updateOne: {
-						filter: { book: bookId, original: item.original },
-						// --- FIX: Use $setOnInsert to prevent overwriting existing words ---
-						update: { $setOnInsert: { translation: item.translation } },
-						upsert: true
+				const { translatedTitle, translatedContent, newVocabItems } = await translateChapter(
+					chineseTitle,
+					chineseContent,
+					bookId,
+					book.title,
+					(type, message) => streamLog(type, message), // Relay service logs to frontend
+					signal // <--- 4. PASS SIGNAL TO SERVICE
+				);
+
+				// --- CHECK SIGNAL AFTER TRANSLATING ---
+				if (signal.aborted) break;
+
+				// --- STEP 3: SAVING (80% Progress) ---
+				streamLog("process", "Saving to Database...", {
+					progress: i + 0.8,
+					step: "saving"
+				});
+
+				// C. Save Vocab
+				let chapterNewVocabCount = 0;
+
+				if (newVocabItems.length > 0) {
+					const vocabOps = newVocabItems.map(item => ({
+						updateOne: {
+							filter: { book: bookId, original: item.original },
+							// --- FIX: Use $setOnInsert to prevent overwriting existing words ---
+							update: { $setOnInsert: { translation: item.translation } },
+							upsert: true
+						}
+					}));
+
+					const bulkResult = await Vocab.bulkWrite(vocabOps);
+
+					// Capture exactly how many were created new
+					chapterNewVocabCount = bulkResult.upsertedCount;
+					totalNewVocabLearned += chapterNewVocabCount;
+
+					// If we added new vocab, clear cache
+					if (chapterNewVocabCount > 0) {
+						vocabChanged = true;
 					}
-				}));
+				}
 
-				const bulkResult = await Vocab.bulkWrite(vocabOps);
+				// D. Save Chapter
+				const currentCount = await Chapter.countDocuments({ book: bookId });
+				const nextChapterNo = currentCount + 1;
 
-				// Capture exactly how many were created new
-				chapterNewVocabCount = bulkResult.upsertedCount;
-				totalNewVocabLearned += chapterNewVocabCount;
-			}
+				// Logic: First X chapters free
+				let finalIsLocked = isLocked !== undefined ? isLocked : true;
+				if (nextChapterNo <= book.freeChapters) finalIsLocked = false;
 
-			// D. Save Chapter
-			const currentCount = await Chapter.countDocuments({ book: bookId });
-			const nextChapterNo = currentCount + 1;
+				const newChapter = await Chapter.create({
+					title: translatedTitle,
+					content: translatedContent,
+					book: bookId,
+					chapterNo: nextChapterNo,
+					isLocked: finalIsLocked,
+					coinCost: finalIsLocked ? (coinCost || 10) : 0,
+					lockedAt: finalIsLocked ? new Date() : null,
+					uploadedBy: req.user._id
+				});
 
-			// Logic: First X chapters free
-			let finalIsLocked = isLocked !== undefined ? isLocked : true;
-			if (nextChapterNo <= book.freeChapters) finalIsLocked = false;
+				// --- FIX: Link Chapter to Book ---
+				// We use findByIdAndUpdate to atomically push the ID to the array
+				await Book.findByIdAndUpdate(bookId, {
+					$push: { chapters: newChapter._id }
+				});
 
-			const newChapter = await Chapter.create({
-				title: translatedTitle,
-				content: translatedContent,
-				book: bookId,
-				chapterNo: nextChapterNo,
-				isLocked: finalIsLocked,
-				coinCost: finalIsLocked ? (coinCost || 10) : 0,
-				lockedAt: finalIsLocked ? new Date() : null,
-				uploadedBy: req.user._id
-			});
+				logs.push(`Success: Chapter ${nextChapterNo} saved. (Learned ${chapterNewVocabCount} new words)`);
+				successCount++;
 
-			// --- FIX: Link Chapter to Book ---
-			// We use findByIdAndUpdate to atomically push the ID to the array
-			await Book.findByIdAndUpdate(bookId, {
-				$push: { chapters: newChapter._id }
-			});
+				// SEND SUCCESS EVENT
+				// --- STEP 4: SUCCESS (100% Progress for this chapter) ---
+				streamLog("success", `Chapter ${nextChapterNo} Saved.`, {
+					vocabAdded: chapterNewVocabCount,
+					totalVocab: totalNewVocabLearned,
+					progress: i + 1
+				});
 
-			logs.push(`Success: Chapter ${nextChapterNo} saved. (Learned ${chapterNewVocabCount} new words)`);
-			successCount++;
+				// Final Report
+				// res.status(200).json({
+				// 	status: "success",
+				// 	processed: successCount,
+				// 	totalNewVocab: totalNewVocabLearned,
+				// 	// logs: logs
+				// });
 
-			// E. Update URL for next loop
-			currentUrl = nextUrl;
+				streamLog("info", "success", {
+					processed: successCount,
+					totalNewVocab: totalNewVocabLearned,
+					logs: logs
+				})
 
-			// F. DELAY (Crucial for Cloudflare & Gemini limits)
-			// Wait 10 seconds between chapters
-			if (i < limit - 1) {
-				console.log("Waiting 10s cooldown...");
-				await new Promise(resolve => setTimeout(resolve, 10000));
+				// E. Update URL for next loop
+				currentUrl = nextUrl;
+
+				// F. DELAY (Crucial for Cloudflare & Gemini limits)
+				// Wait 10 seconds between chapters (With Client Abort Support)
+				if (i < limit - 1) {
+					streamLog("wait", "Cooling down for 10s...");
+					console.log("Waiting 10s cooldown...");
+
+					// --- 5. SMART DELAY THAT CAN BE CANCELLED ---
+					await new Promise((resolve, reject) => {
+						const timer = setTimeout(resolve, 10000);
+						signal.addEventListener('abort', () => {
+							clearTimeout(timer);
+							reject(new Error("ABORTED_BY_CLIENT"));
+						});
+					});
+				}
+
+
+			} catch (chapterError) {
+				if (chapterError.message === "ABORTED_BY_CLIENT") {
+					break; // Break loop silently
+				}
+
+				// Handle retry/skip logic logs here if needed
+				streamLog("error", `Failed Chapter ${i + 1}: ${chapterError.message}`);
+				hasCriticalError = true; // Mark as failed
+				// break? Usually break if scraping fails.
+				break; // Stop the loop immediately
 			}
 		}
 
-		// Final Report
-		res.status(200).json({
-			status: "success",
-			processed: successCount,
-			totalNewVocab: totalNewVocabLearned,
-			logs: logs
-		});
+		if (vocabChanged) {
+			clearVocabCache(bookId);
+		}
+
+		resetModelQuotaState();
+
+		// FINAL REPORT
+		if (signal.aborted) {
+			streamLog("aborted", "Mission Stopped by User.");
+		} else if (hasCriticalError) {
+			streamLog("aborted", `Mission Aborted. Processed ${successCount}/${limit} chapters.`);
+		} else {
+			streamLog("done", "Mission Complete", { totalProcessed: successCount });
+		}
+
+		res.end();
 
 	} catch (error) {
+		if (error.message === "ABORTED_BY_CLIENT") {
+			res.end();
+			return;
+		}
+
 		console.error("Bulk Error:", error);
 		// Return partial logs so you know where it failed
-		res.status(500).json({
-			status: "fail",
-			error: error.message,
-			processed: successCount,
-			logs
-		});
+		// res.status(500).json({
+		// 	status: "fail",
+		// 	error: error.message,
+		// 	processed: successCount,
+		// 	logs
+		// });
+		streamLog("error", `Critical Server Error: ${error.message}`);
+		streamLog("aborted", "Mission Crashed."); // Ensure frontend turns red
+
+		res.end();
 	}
 };
 
