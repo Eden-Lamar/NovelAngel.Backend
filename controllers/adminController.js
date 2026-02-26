@@ -1,6 +1,7 @@
 const Book = require("../models/Book");
 const Chapter = require("../models/Chapter");
 const User = require("../models/User");
+const Vocab = require("../models/Vocab");
 const { uploadImage, deleteImage } = require("../utils/s3")
 
 
@@ -143,20 +144,23 @@ const deleteBook = async (req, res) => {
 			});
 		}
 
-		// Delete book image from S3 if it exists
+		// 1. Delete book image from S3 if it exists
 		if (book.bookImage) {
 			await deleteImage(book.bookImage);
 		}
 
-		// Delete associated chapters
+		// 2. Delete associated chapters
 		await Chapter.deleteMany({ book: bookId });
 
-		// Delete the book
+		// 3. Delete associated vocabulary (Clean up orphans)
+		await Vocab.deleteMany({ book: bookId });
+
+		// 4. Delete the book
 		await Book.deleteOne({ _id: bookId });
 
 		res.status(200).json({
 			status: "success",
-			message: "Book and associated chapters deleted",
+			message: "Book and associated chapters and vocabulary deleted",
 		});
 	} catch (error) {
 		res.status(500).json({
