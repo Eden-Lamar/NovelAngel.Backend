@@ -342,11 +342,12 @@ const deleteChapter = async (req, res) => {
 const getDashboardStats = async (req, res) => {
 	try {
 		// Fetch counts concurrently for performance
-		const [totalBooks, ongoingBooks, completedBooks, totalCustomers] = await Promise.all([
+		const [totalBooks, ongoingBooks, completedBooks, totalCustomers, autoUnlockingBooks] = await Promise.all([
 			Book.countDocuments(),
 			Book.countDocuments({ status: 'ongoing' }),
 			Book.countDocuments({ status: 'completed' }),
-			User.countDocuments({ role: 'user' })
+			User.countDocuments({ role: 'user' }),
+			Book.countDocuments({ isAutoUnlockEnabled: true })
 		]);
 
 		res.status(200).json({
@@ -355,7 +356,8 @@ const getDashboardStats = async (req, res) => {
 				totalBooks,
 				ongoingBooks,
 				completedBooks,
-				totalCustomers
+				totalCustomers,
+				autoUnlockingBooks
 			}
 		});
 	} catch (error) {
