@@ -52,6 +52,17 @@ const chapterSchema = new Schema({
 	// 	ref: 'Comment'
 	// }],
 
+	sourceUrl: {
+		type: String,
+		default: null
+	},
+
+	status: {
+		type: String,
+		enum: ['published', 'failed'],
+		default: 'published'
+	},
+
 	releasedAt: {
 		type: Date,
 		default: null, // Default to null. We set this when it becomes free.
