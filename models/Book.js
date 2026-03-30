@@ -96,6 +96,12 @@ const bookSchema = new Schema({
 		default: null
 	},
 
+	// Controls if the daily cron job targets this book
+	isAutoUnlockEnabled: {
+		type: Boolean,
+		default: false
+	}
+
 }, { timestamps: true });
 
 // Create a text index on title and author for efficient text search
@@ -110,5 +116,8 @@ bookSchema.index({ updatedAt: -1, views: -1, likeCount: -1 });
 
 // Created Index for book recommendations
 bookSchema.index({ createdAt: -1 });
+
+// NEW INDEX: Optimizes the daily cron job query -> Book.find({ isAutoUnlockEnabled: true })
+bookSchema.index({ isAutoUnlockEnabled: 1 });
 
 module.exports = mongoose.model('Book', bookSchema);
