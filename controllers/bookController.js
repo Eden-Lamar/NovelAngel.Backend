@@ -672,5 +672,48 @@ const getAllBooks = async (req, res) => {
 	}
 };
 
+// @description: Toggle the daily auto-unlock feature for a specific book
+// @route PATCH /api/v1/books/:id/toggle-auto-unlock
+// @access private (Admin only)
+const toggleAutoUnlock = async (req, res) => {
+	try {
+		const { id } = req.params;
 
-module.exports = { searchBooks, getBookById, getChapterById, unlockChapter, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations, getBookComments, getBookWithComments, getAllBooks };
+		// 1. Security Check: Ensure only admins can toggle this
+		if (!req.user || req.user.role !== 'admin') {
+			return res.status(403).json({
+				status: 'fail',
+				message: 'Not authorized. Only admins can toggle daily unlocks.'
+			});
+		}
+
+		// 2. Find the book
+		const book = await Book.findById(id);
+		if (!book) {
+			return res.status(404).json({
+				status: 'fail',
+				message: 'Book not found'
+			});
+		}
+
+		// 3. Toggle the boolean flag
+		book.isAutoUnlockEnabled = !book.isAutoUnlockEnabled;
+		await book.save();
+
+		// 4. Send response
+		res.status(200).json({
+			status: 'success',
+			message: `Auto-unlock is now ${book.isAutoUnlockEnabled ? 'ENABLED' : 'DISABLED'} for "${book.title}"`,
+			data: {
+				isAutoUnlockEnabled: book.isAutoUnlockEnabled
+			}
+		});
+	} catch (error) {
+		res.status(500).json({
+			status: 'fail',
+			message: error.message
+		});
+	}
+};
+
+module.exports = { searchBooks, getBookById, getChapterById, unlockChapter, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations, getBookComments, getBookWithComments, getAllBooks, toggleAutoUnlock };
