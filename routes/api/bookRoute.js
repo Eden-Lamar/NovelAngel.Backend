@@ -1,5 +1,5 @@
 const express = require('express');
-const { searchBooks, getBookById, getChapterById, unlockChapter, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations, getBookComments, getBookWithComments, getAllBooks } = require('../../controllers/bookController');
+const { searchBooks, getBookById, getChapterById, unlockChapter, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations, getBookComments, getBookWithComments, getAllBooks, toggleAutoUnlock } = require('../../controllers/bookController');
 const { protect, optionalAuthMiddleware } = require("../../middlewares/authMiddleware")
 
 const router = express.Router();
@@ -18,5 +18,7 @@ router.get('/books/:bookId/chapters/:chapterId', optionalAuthMiddleware, getChap
 router.post('/books/:bookId/chapters/:chapterId/unlock', protect, unlockChapter); // Unlock a locked chapter using coins
 
 router.get('/books/', getAllBooks); // Get all books with pagination 
+
+router.patch('/books/:id/toggle-auto-unlock', protect, toggleAutoUnlock);
 
 module.exports = router;
