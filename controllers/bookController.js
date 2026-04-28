@@ -291,12 +291,39 @@ const getChapterById = async (req, res) => {
 			});
 		}
 
-		// Increment views only if the user is registered and hasn't viewed the book yet
-		if (userId && !book.viewedBy.includes(userId)) {
-			book.views += 1; // Increment the view count
-			book.viewedBy.push(userId); // Mark the user as having viewed the book
-			await book.save(); // Save the updated book
-		}
+		// --- NEW VIEW TRACKING LOGIC ---
+    
+    // 1. Get the user's IP address (handles proxies/load balancers)
+    let clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+		// If multiple IPs are returned, grab the first one (the original client)
+    if (clientIp && typeof clientIp === 'string' && clientIp.includes(',')) {
+      clientIp = clientIp.split(',')[0].trim();
+    }
+		
+    let isNewView = false;
+
+    if (userId) {
+      // Logic for logged-in users
+      if (!book.viewedBy.includes(userId)) {
+        book.viewedBy.push(userId);
+        isNewView = true;
+      }
+    } else {
+      // Logic for anonymous users
+      if (!book.anonymousViewers.includes(clientIp)) {
+        book.anonymousViewers.push(clientIp);
+        isNewView = true;
+      }
+    }
+
+    // Increment views and save only if it's a new unique view
+    if (isNewView) {
+      book.views += 1; 
+      await book.save(); 
+    }
+    
+    // --- END VIEW TRACKING LOGIC ---
 
 		// Track reading history for logged-in users
 		if (user) {
