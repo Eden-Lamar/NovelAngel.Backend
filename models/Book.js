@@ -91,6 +91,11 @@ const bookSchema = new Schema({
 		ref: 'User',
 	}],
 
+	// NEW: Track anonymous users by IP to prevent refresh spam
+  anonymousViewers: [{
+    type: String,
+  }],
+
 	lastUnlockedAt: {
 		type: Date,
 		default: null
