@@ -354,6 +354,48 @@ const getContinueReading = async (req, res) => {
 	}
 };
 
+// @description: Get all customers (users with role 'user')
+// @route GET /api/v1/user/customers
+// @access private (Admin only)
+const getAllCustomers = async (req, res) => {
+	try {
+		const { page = 1, limit = 15 } = req.query;
+		const pageNumber = parseInt(page, 10);
+		const limitNumber = parseInt(limit, 10);
+		const skip = (pageNumber - 1) * limitNumber;
+
+		// We only want normal users, not admins
+		const query = { role: 'user' };
+
+		const customersPromise = User.find(query)
+			.select('username email avatar createdAt coinBalance unlockedChapters role')
+			.sort({ createdAt: -1 })
+			.skip(skip)
+			.limit(limitNumber);
+
+		const countPromise = User.countDocuments(query);
+
+		// Execute both queries in parallel for efficiency
+		const [customers, total] = await Promise.all([customersPromise, countPromise]);
+		const totalPages = Math.ceil(total / limitNumber);
+
+		res.status(200).json({
+			status: 'success',
+			results: customers.length,
+			data: customers,
+			pagination: {
+				total,
+				currentPage: pageNumber,
+				totalPages
+			}
+		});
+	} catch (error) {
+		res.status(500).json({
+			status: 'fail',
+			error: error.message
+		});
+	}
+};
 
 module.exports = {
 	registerUser,
@@ -362,5 +404,6 @@ module.exports = {
 	updateProfile,
 	getUserBookmarks,
 	getReadingHistory,
-	getContinueReading
+	getContinueReading,
+	getAllCustomers
 };
