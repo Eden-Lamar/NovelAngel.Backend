@@ -292,38 +292,38 @@ const getChapterById = async (req, res) => {
 		}
 
 		// --- NEW VIEW TRACKING LOGIC ---
-    
-    // 1. Get the user's IP address (handles proxies/load balancers)
-    let clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+		// 1. Get the user's IP address (handles proxies/load balancers)
+		let clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
 		// If multiple IPs are returned, grab the first one (the original client)
-    if (clientIp && typeof clientIp === 'string' && clientIp.includes(',')) {
-      clientIp = clientIp.split(',')[0].trim();
-    }
-		
-    let isNewView = false;
+		if (clientIp && typeof clientIp === 'string' && clientIp.includes(',')) {
+			clientIp = clientIp.split(',')[0].trim();
+		}
 
-    if (userId) {
-      // Logic for logged-in users
-      if (!book.viewedBy.includes(userId)) {
-        book.viewedBy.push(userId);
-        isNewView = true;
-      }
-    } else {
-      // Logic for anonymous users
-      if (!book.anonymousViewers.includes(clientIp)) {
-        book.anonymousViewers.push(clientIp);
-        isNewView = true;
-      }
-    }
+		let isNewView = false;
 
-    // Increment views and save only if it's a new unique view
-    if (isNewView) {
-      book.views += 1; 
-      await book.save(); 
-    }
-    
-    // --- END VIEW TRACKING LOGIC ---
+		if (userId) {
+			// Logic for logged-in users
+			if (!book.viewedBy.includes(userId)) {
+				book.viewedBy.push(userId);
+				isNewView = true;
+			}
+		} else {
+			// Logic for anonymous users
+			if (!book.anonymousViewers.includes(clientIp)) {
+				book.anonymousViewers.push(clientIp);
+				isNewView = true;
+			}
+		}
+
+		// Increment views and save only if it's a new unique view
+		if (isNewView) {
+			book.views += 1;
+			await book.save();
+		}
+
+		// --- END VIEW TRACKING LOGIC ---
 
 		// Track reading history for logged-in users
 		if (user) {
@@ -665,12 +665,20 @@ const getBookRecommendations = async (req, res) => {
 // @access public
 const getAllBooks = async (req, res) => {
 	try {
-		const { page = 1, limit = 6 } = req.query;
+		const { page = 1, limit = 6, autoUnlock } = req.query;// Extract autoUnlock
 		const pageNumber = parseInt(page, 10) || 1;
 		const limitNumber = parseInt(limit, 10) || 6;
 		const skip = (pageNumber - 1) * limitNumber;
 
-		const booksPromise = Book.find()
+		// 1. Initialize query object
+		let query = {};
+
+		// 2. Add filter if autoUnlock is explicitly requested
+		if (autoUnlock === 'true') {
+			query.isAutoUnlockEnabled = true;
+		}
+
+		const booksPromise = Book.find(query)
 			.sort({ createdAt: -1 }) // Sort by creation date descending so that mean the newest books appear first
 			.skip(skip)
 			.limit(limitNumber)
