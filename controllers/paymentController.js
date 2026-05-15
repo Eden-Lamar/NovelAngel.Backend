@@ -16,7 +16,7 @@ const COIN_PLANS = [
 	{ baseCoins: 10000, bonus: 4500, price: 99.99 },
 ];
 
-// @description: Initiate coin purchase
+// @description: Initiate coin purchase by creating a transaction and redirecting to Flutterwave checkout
 // @route POST /api/v1/payments/buy-coins
 // @access private
 const buyCoins = async (req, res) => {
@@ -233,100 +233,97 @@ const flutterwaveWebhook = async (req, res) => {
 // @route POST /api/v1/payments/bmac/webhook
 // @access public (secured by query token)
 const bmacWebhook = async (req, res) => {
-	// 1. Security Check: Verify secret token passed in the URL
+	// 1. Security Check (using query string as you have it now)
 	const token = req.query.token;
 	if (!token || token !== process.env.BMAC_WEBHOOK_SECRET) {
-		console.log("BMAC Webhook failed: Invalid or missing token");
+		console.log("BMAC Webhook failed: Invalid token");
 		return res.status(401).end();
 	}
 
-	console.log("BMAC Webhook received - Body:", JSON.stringify(req.body, null, 2));
+	const { type, data } = req.body;
+	console.log(`Received BMAC event: ${type}`);
+
+	// Updated to include the event type from your logs
+	const validEvents = ['extra_purchase.created', 'extra_purchased', 'shop_purchased'];
+	if (!validEvents.includes(type)) {
+		console.log(`Skipping event: ${type}`);
+		return res.status(200).end();
+	}
 
 	try {
-		// BMAC typically wraps the payload in a 'type' and 'data' object
-		const { type, data } = req.body;
-
-		// Check if the event is related to a Shop/Extra purchase
-		// Note: We log the exact type so you can adjust this string if BMAC changes their naming
-		const validEvents = ['extra_purchased', 'shop_purchased', 'Extras purchased'];
-		if (!validEvents.includes(type)) {
-			console.log(`BMAC Webhook skipped: Event is not a shop purchase (Event: ${type})`);
-			return res.status(200).end();
-		}
-
 		// 2. Identify the User
-		// BMAC sends the payer's email, but we also check for custom question answers
-		const payerEmail = data.payer_email || data.supporter_email || "";
+		// BMAC Test payload has data.supporter_email
+		const payerEmail = data.supporter_email || "";
+
+		// Check for the custom answer in the first extra item
 		let customAnswer = "";
-
-		// Look for the custom question you set up ("What is your Novel Angel Email...")
-		if (data.custom_questions && Array.isArray(data.custom_questions)) {
-			const questionData = data.custom_questions[0];
-			if (questionData && questionData.answer) {
-				customAnswer = questionData.answer.trim();
-			}
+		if (data.extras && data.extras[0] && data.extras[0].question_answers) {
+			// BMAC stores answers in an array/object depending on the setup
+			// We'll try to find the answer if it exists
+			const answers = data.extras[0].question_answers;
+			if (typeof answers === 'string') customAnswer = answers;
+			else if (Array.isArray(answers) && answers.length > 0) customAnswer = answers[0];
 		}
 
-		// Prioritize the custom answer, fallback to the email they used to check out
 		const userIdentifier = customAnswer || payerEmail;
-
 		if (!userIdentifier) {
-			console.log("BMAC Webhook: No email or identifier found to credit user.");
-			return res.status(200).end(); // Always return 200 so BMAC stops retrying
+			console.log("No user identifier found.");
+			return res.status(200).end();
 		}
 
-		// Find the user in the database by email or username (in case they entered their username in the custom question)
-		const user = await User.findOne({
-			$or: [
-				{ email: userIdentifier.toLowerCase() },
-				{ username: userIdentifier }
-			]
-		});
-
+		const user = await User.findOne({ email: userIdentifier.toLowerCase().trim() });
 		if (!user) {
-			console.log("BMAC Webhook: User not found in database for identifier:", userIdentifier);
+			console.log(`User not found for: ${userIdentifier}`);
 			return res.status(200).end();
 		}
 
-		// 3. Determine how many coins to grant based on the Shop Item Title
-		const itemTitle = data.extra_title || data.title || "";
+		// 3. Determine Coins from Item Title
+		const itemTitle = data.extras && data.extras[0] ? data.extras[0].title : "";
 		let coinsToAdd = 0;
-		let amountPaid = data.amount || 0;
 
-		// Use string matching to figure out which package they bought
-		if (itemTitle.includes("100")) coinsToAdd = 100;
-		else if (itemTitle.includes("300")) coinsToAdd = 300;
-		else if (itemTitle.includes("500")) coinsToAdd = 500;
-		else if (itemTitle.includes("1050")) coinsToAdd = 1050; // 1000 + 50 bonus
-		else if (itemTitle.includes("2200")) coinsToAdd = 2200; // 2000 + 200 bonus
-		else if (itemTitle.includes("6750")) coinsToAdd = 6750; // 5000 + 1750 bonus
-		else if (itemTitle.includes("14500")) coinsToAdd = 14500; // 10000 + 4500 bonus
+		//  Match based on the EXACT names you gave your Shop items
+		// Tip: Use .toLowerCase() to make it case-insensitive
+		const lowerTitle = itemTitle.toLowerCase();
 
+		if (lowerTitle.includes("100 coins")) {
+			coinsToAdd = 100;
+		} else if (lowerTitle.includes("300 coins")) {
+			coinsToAdd = 300;
+		} else if (lowerTitle.includes("500 coins")) {
+			coinsToAdd = 500;
+		} else if (lowerTitle.includes("1050 coins") || lowerTitle.includes("1000 coins")) {
+			coinsToAdd = 1050; // Matching your 1000 + 50 bonus plan
+		} else if (lowerTitle.includes("2200 coins") || lowerTitle.includes("2000 coins")) {
+			coinsToAdd = 2200; // Matching your 2000 + 200 bonus plan
+		} else if (lowerTitle.includes("6750 coins") || lowerTitle.includes("5000 coins")) {
+			coinsToAdd = 6750;
+		} else if (lowerTitle.includes("14500 coins") || lowerTitle.includes("10000 coins")) {
+			coinsToAdd = 14500;
+		}
+
+		// Validation
 		if (coinsToAdd === 0) {
-			console.log("BMAC Webhook: Could not determine coin amount from item title:", itemTitle);
+			console.log(`[ALARM] Received payment for "${itemTitle}" but couldn't find a matching coin plan!`);
+			// You might want to send yourself an email notification here
 			return res.status(200).end();
 		}
 
-		// 4. Update the User's Coin Balance
-		const updatedUser = await User.findByIdAndUpdate(
-			user._id,
-			{ $inc: { coinBalance: coinsToAdd } },
-			{ new: true }
-		);
-		console.log(`Success! Credited ${coinsToAdd} coins to ${updatedUser.email} via BMAC.`);
+		// 4. Update Balance & Transaction
+		await User.findByIdAndUpdate(user._id, { $inc: { coinBalance: coinsToAdd } });
 
-		// 5. Log the Transaction (So it shows up in your admin dashboard)
 		await Transaction.create({
 			user: user._id,
-			tx_ref: `bmac-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-			transaction_id: data.id || `bmac-tx-${Date.now()}`,
-			amount: amountPaid,
+			tx_ref: `bmac-${Date.now()}`,
+			transaction_id: data.transaction_id || data.id,
+			amount: parseFloat(data.amount),
 			currency: data.currency || 'USD',
 			coins: coinsToAdd,
 			status: 'successful'
 		});
 
+		console.log(`Successfully credited ${coinsToAdd} coins to ${user.email}`);
 		res.status(200).end();
+
 	} catch (error) {
 		console.error("BMAC Webhook Error:", error.message);
 		res.status(500).end();
