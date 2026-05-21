@@ -53,7 +53,7 @@ const searchBooks = async (req, res) => {
 		console.log(query);
 		// 8. Execute the Query with Filters, Sorting, and Pagination
 		const booksPromise = Book.find(query)
-			.select('title author description category chapters bookImage tags status likeCount country views')
+			.select('title author description category chapters bookImage tags status likeCount country views isAutoUnlockEnabled autoUnlockCount autoUnlockTime')
 			.sort({ createdAt: -1 }) // Apply sorting
 			.skip(skip) // Skip books for pagination
 			.limit(limitNumber) // Limit the number of books returned
@@ -682,7 +682,7 @@ const getAllBooks = async (req, res) => {
 			.sort({ createdAt: -1 }) // Sort by creation date descending so that mean the newest books appear first
 			.skip(skip)
 			.limit(limitNumber)
-			.select('title description bookImage status chapters views likeCount country tags');
+			.select('title description bookImage status chapters views likeCount country tags isAutoUnlockEnabled autoUnlockCount autoUnlockTime'); // Select only necessary fields for listing
 		const countPromise = Book.countDocuments();
 
 		// Execute both promises in parallel to improve performance that means we are fetching the books and counting the total number of books at the same time
@@ -713,6 +713,8 @@ const getAllBooks = async (req, res) => {
 const toggleAutoUnlock = async (req, res) => {
 	try {
 		const { id } = req.params;
+		// Expecting these values from the frontend modal/form
+		const { isEnabled, count, time } = req.body;
 
 		// 1. Security Check: Ensure only admins can toggle this
 		if (!req.user || req.user.role !== 'admin') {
@@ -731,16 +733,21 @@ const toggleAutoUnlock = async (req, res) => {
 			});
 		}
 
-		// 3. Toggle the boolean flag
-		book.isAutoUnlockEnabled = !book.isAutoUnlockEnabled;
+		// 3. Update the fields if they were provided in the request
+		if (isEnabled !== undefined) book.isAutoUnlockEnabled = isEnabled;
+		if (count !== undefined) book.autoUnlockCount = Number(count);
+		if (time !== undefined) book.autoUnlockTime = time;
+
 		await book.save();
 
 		// 4. Send response
 		res.status(200).json({
 			status: 'success',
-			message: `Auto-unlock is now ${book.isAutoUnlockEnabled ? 'ENABLED' : 'DISABLED'} for "${book.title}"`,
+			message: `Auto-unlock settings updated for "${book.title}"`,
 			data: {
-				isAutoUnlockEnabled: book.isAutoUnlockEnabled
+				isAutoUnlockEnabled: book.isAutoUnlockEnabled,
+				autoUnlockCount: book.autoUnlockCount,
+				autoUnlockTime: book.autoUnlockTime
 			}
 		});
 	} catch (error) {
