@@ -92,9 +92,9 @@ const bookSchema = new Schema({
 	}],
 
 	// NEW: Track anonymous users by IP to prevent refresh spam
-  anonymousViewers: [{
-    type: String,
-  }],
+	anonymousViewers: [{
+		type: String,
+	}],
 
 	lastUnlockedAt: {
 		type: Date,
@@ -105,7 +105,17 @@ const bookSchema = new Schema({
 	isAutoUnlockEnabled: {
 		type: Boolean,
 		default: false
-	}
+	},
+
+	autoUnlockCount: {
+		type: Number,
+		default: 1, // Default to 1 chapter per day
+	},
+
+	autoUnlockTime: {
+		type: String,
+		default: "00:00", // Default to Midnight (24-hour HH:MM format)
+	},
 
 }, { timestamps: true });
 
