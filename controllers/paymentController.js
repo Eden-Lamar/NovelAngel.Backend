@@ -273,7 +273,16 @@ const bmacWebhook = async (req, res) => {
 
 		const user = await User.findOne({ email: userIdentifier.toLowerCase().trim() });
 		if (!user) {
-			console.log(`User not found for: ${userIdentifier}`);
+			// 🚨 ALARM FOR ORPHANED PAYMENTS 🚨
+			console.log("\n=======================================================");
+			console.log("🚨 PAYMENT RECEIVED BUT USER NOT FOUND! 🚨");
+			console.log(`Email used on BMAC: ${userIdentifier}`);
+			console.log(`Amount paid: $${data.amount}`);
+			console.log(`Transaction ID: ${data.id}`);
+			console.log("ACTION REQUIRED: If a user emails support complaining about missing coins, verify this transaction ID and manually credit them.");
+			console.log("=======================================================\n");
+
+			// We still return 200 so BMAC knows we got the message
 			return res.status(200).end();
 		}
 
