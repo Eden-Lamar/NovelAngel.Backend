@@ -9,7 +9,7 @@ const { uploadImage, deleteImage } = require("../utils/s3")
 // @route POST /api/v1/admin/books
 // @access private (Admin)
 const addBook = async (req, res) => {
-	const { title, author, description, category, country, tags, status } = req.body;
+	const { title, author, description, category, country, tags, status, buyMeACoffeeLink } = req.body;
 	// Validate tags
 	if (!tags) {
 		return res.status(400).json({
@@ -44,6 +44,7 @@ const addBook = async (req, res) => {
 			country,
 			tags: tagsArr,
 			status,
+			buyMeACoffeeLink,
 			bookImage: bookImageUrl,
 			uploadedBy: req.user._id,
 		});
@@ -66,7 +67,7 @@ const addBook = async (req, res) => {
 // @access private (Admin)
 const updateBook = async (req, res) => {
 	const { bookId } = req.params;
-	let { title, author, description, category, country, tags, status } = req.body;
+	let { title, author, description, category, country, tags, status, buyMeACoffeeLink } = req.body;
 
 	try {
 		const book = await Book.findById(bookId);
@@ -112,6 +113,10 @@ const updateBook = async (req, res) => {
 		book.country = country || book.country;
 		book.status = status || book.status;
 
+		// Check for undefined so the admin can explicitly remove the link by sending an empty string or null
+		if (buyMeACoffeeLink !== undefined) {
+			book.buyMeACoffeeLink = buyMeACoffeeLink;
+		}
 
 		// Prevent automatic updatedAt change on save
 		const updatedBook = await book.save({ timestamps: false });
