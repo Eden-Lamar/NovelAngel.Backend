@@ -53,7 +53,7 @@ const searchBooks = async (req, res) => {
 		console.log(query);
 		// 8. Execute the Query with Filters, Sorting, and Pagination
 		const booksPromise = Book.find(query)
-			.select('title author description category chapters bookImage tags status likeCount country views isAutoUnlockEnabled autoUnlockCount autoUnlockTime')
+			.select('title author description category chapters bookImage tags status likeCount country views isAutoUnlockEnabled autoUnlockCount autoUnlockTime buyMeACoffeeLink')
 			.sort({ createdAt: -1 }) // Apply sorting
 			.skip(skip) // Skip books for pagination
 			.limit(limitNumber) // Limit the number of books returned
@@ -103,7 +103,7 @@ const getBookById = async (req, res) => {
 			})
 			.populate({
 				path: 'chapters',
-				select: 'title chapterNo isLocked createdAt coinCost', // Select specific fields from chapters
+				select: 'title chapterNo isLocked createdAt coinCost buyMeACoffeeLink', // Select specific fields from chapters
 				options: { sort: { chapterNo: 1 } } // Optional: Sort chapters by chapter number in asce order
 			});
 
@@ -682,7 +682,7 @@ const getAllBooks = async (req, res) => {
 			.sort({ createdAt: -1 }) // Sort by creation date descending so that mean the newest books appear first
 			.skip(skip)
 			.limit(limitNumber)
-			.select('title description bookImage status chapters views likeCount country tags isAutoUnlockEnabled autoUnlockCount autoUnlockTime'); // Select only necessary fields for listing
+			.select('title description bookImage status chapters views likeCount country tags isAutoUnlockEnabled autoUnlockCount autoUnlockTime buyMeACoffeeLink'); // Select only necessary fields for listing
 		const countPromise = Book.countDocuments();
 
 		// Execute both promises in parallel to improve performance that means we are fetching the books and counting the total number of books at the same time
