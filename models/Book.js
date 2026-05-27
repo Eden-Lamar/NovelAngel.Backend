@@ -70,6 +70,13 @@ const bookSchema = new Schema({
 		//   required: [true, "status is a Required field"]
 	},
 
+	// Link to Buy Me a Coffee for books that are already completed and want to monetize through donations
+	buyMeACoffeeLink: {
+		type: String,
+		trim: true,
+		default: null
+	},
+
 	uploadedBy: {
 		type: Schema.Types.ObjectId,
 		ref: 'User',
