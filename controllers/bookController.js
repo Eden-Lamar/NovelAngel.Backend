@@ -103,7 +103,7 @@ const getBookById = async (req, res) => {
 			})
 			.populate({
 				path: 'chapters',
-				select: 'title chapterNo isLocked createdAt coinCost buyMeACoffeeLink', // Select specific fields from chapters
+				select: 'title chapterNo isLocked createdAt coinCost buyMeACoffeeLink scheduledReleaseDate', // Select specific fields from chapters
 				options: { sort: { chapterNo: 1 } } // Optional: Sort chapters by chapter number in asce order
 			});
 
