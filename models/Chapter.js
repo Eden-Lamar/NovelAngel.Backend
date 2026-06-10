@@ -63,6 +63,11 @@ const chapterSchema = new Schema({
 		default: 'published'
 	},
 
+	scheduledReleaseDate: {
+    type: Date,
+    default: null, // Null means it is either completely locked, completely free, or relying on the Book's batch unlock
+  },
+
 	releasedAt: {
 		type: Date,
 		default: null, // Default to null. We set this when it becomes free.
