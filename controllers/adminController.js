@@ -182,7 +182,7 @@ const getChapter = async (req, res) => {
 	const { chapterId } = req.params;
 
 	try {
-		const chapter = await Chapter.findById(chapterId).select("title content chapterNo isLocked coinCost book").populate("book", "title");
+		const chapter = await Chapter.findById(chapterId).select("title content chapterNo isLocked coinCost book scheduledReleaseDate").populate("book", "title");
 
 		if (!chapter) {
 			return res.status(404).json({
@@ -209,7 +209,7 @@ const getChapter = async (req, res) => {
 // @route POST /api/v1/admin/books/:bookId/chapters
 // @access private (Admin)
 const addChapter = async (req, res) => {
-	const { title, content, isLocked, coinCost } = req.body;
+	const { title, content, isLocked, coinCost, scheduledReleaseDate } = req.body;
 	const { bookId } = req.params;
 
 	try {
@@ -252,6 +252,7 @@ const addChapter = async (req, res) => {
 			isLocked: finalIsLocked,
 			coinCost: finalCoinCost,
 			lockedAt,
+			scheduledReleaseDate: scheduledReleaseDate || null, // Save the scheduled date (or null if not provided)
 			uploadedBy: req.user._id
 		});
 
@@ -274,7 +275,7 @@ const addChapter = async (req, res) => {
 // Update Chapter
 const updateChapter = async (req, res) => {
 	const { chapterId } = req.params;
-	const { title, content, isLocked, coinCost } = req.body;
+	const { title, content, isLocked, coinCost, scheduledReleaseDate } = req.body;
 
 	try {
 		const chapter = await Chapter.findById(chapterId);
@@ -291,6 +292,12 @@ const updateChapter = async (req, res) => {
 		const newIsLocked = isLocked !== undefined ? isLocked : chapter.isLocked;
 		chapter.isLocked = newIsLocked;
 		chapter.coinCost = newIsLocked ? (coinCost !== undefined ? coinCost : chapter.coinCost) : 0;
+
+		// Allow updating or clearing the scheduled release date
+		if (scheduledReleaseDate !== undefined) {
+			chapter.scheduledReleaseDate = scheduledReleaseDate;
+		}
+
 		const updatedChapter = await chapter.save();
 
 		res.status(200).json({
