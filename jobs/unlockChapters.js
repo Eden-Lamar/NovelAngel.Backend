@@ -1,89 +1,126 @@
 const cron = require("node-cron");
-const Book = require("../models/Book.js");
+const Book = require("../models/Book");
 const Chapter = require("../models/Chapter");
 
 const isEnabled = process.env.ENABLE_CHAPTER_UNLOCK === "true";
 
 if (!isEnabled) {
-	console.log("⏸️ Chapter unlock job is DISABLED (via ENV)");
-	return; // stop loading cron
+  console.log("⏸️  Chapter unlock job is DISABLED (via ENV)");
+  return; // stop loading cron
 }
 
-console.log("⏰ Daily unlock job ENABLED!Running every minute to check scheduled times...\n");
+console.log("⏰ Unlock job ENABLED! Running every minute to check scheduled times...\n");
 
-// Run once a day at midnight (WAT – Africa/Lagos)
+// Runs every single minute
 cron.schedule(
-	"* * * * *",
-	async () => {
-		try {
-			// 1. Get current time in Lagos (WAT) in HH:MM format
-			const lagosDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Africa/Lagos" }));
-			const currentHour = String(lagosDate.getHours()).padStart(2, '0');
-			const currentMinute = String(lagosDate.getMinutes()).padStart(2, '0');
-			const currentHHMM = `${currentHour}:${currentMinute}`;
+  "* * * * *",
+  async () => {
+    try {
+      // 1. Get current time in Lagos (WAT) in HH:MM format
+      const lagosDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Africa/Lagos" }));
+      const currentHour = String(lagosDate.getHours()).padStart(2, '0');
+      const currentMinute = String(lagosDate.getMinutes()).padStart(2, '0');
+      const currentHHMM = `${currentHour}:${currentMinute}`;
 
-			// 2. Find books that are enabled AND scheduled for this exact minute
-			const books = await Book.find({
-				isAutoUnlockEnabled: true,
-				autoUnlockTime: currentHHMM
-			}).populate("chapters");
+      // ====================================================================
+      // TASK A: THE BATCH UNLOCK (Book-Level Schedule)
+      // ====================================================================
 
-			// Silent return if no books match the current time to avoid console spam
-			if (books.length === 0) return;
+      // 2. Find books that are enabled AND scheduled for this exact minute
+      const books = await Book.find({
+        isAutoUnlockEnabled: true,
+        autoUnlockTime: currentHHMM
+      }).populate("chapters");
 
-			console.log(`🔔 Found ${books.length} book(s) scheduled for unlock at ${currentHHMM}`);
+      if (books.length > 0) {
+        console.log(`🔔 Found ${books.length} book(s) scheduled for batch unlock at ${currentHHMM}`);
 
-			for (const book of books) {
-				// Check safeguard: skip if unlocked today already to prevent double-firing
-				if (
-					book.lastUnlockedAt &&
-					new Date(book.lastUnlockedAt).toDateString() === lagosDate.toDateString()
-				) {
-					console.log(`⏭️ Skipping "${book.title}" (already unlocked today)`);
-					continue;
-				}
+        for (const book of books) {
+          // Check safeguard: skip if unlocked today already to prevent double-firing
+          if (
+            book.lastUnlockedAt &&
+            new Date(book.lastUnlockedAt).toDateString() === lagosDate.toDateString()
+          ) {
+            console.log(`⏭️ Skipping "${book.title}" (already unlocked today)`);
+            continue;
+          }
 
-				// Sort chapters by chapterNo
-				const sortedChapters = [...book.chapters].sort(
-					(a, b) => a.chapterNo - b.chapterNo
-				);
+          // Sort chapters by chapterNo
+          const sortedChapters = [...book.chapters].sort((a, b) => a.chapterNo - b.chapterNo);
 
-				// Filter out all locked chapters beyond freeChapters
-				const lockedChapters = sortedChapters.filter(
-					(ch) => ch.isLocked && ch.chapterNo > book.freeChapters
-				);
+          // Filter out all locked chapters beyond freeChapters
+          const lockedChapters = sortedChapters.filter(
+            (ch) => ch.isLocked && ch.chapterNo > book.freeChapters
+          );
 
-				// 3. Slice the exact number of chapters the admin requested (defaults to 1)
-				const chaptersToUnlock = lockedChapters.slice(0, book.autoUnlockCount || 1);
+          // 3. Slice the exact number of chapters the admin requested (defaults to 1)
+          const chaptersToUnlock = lockedChapters.slice(0, book.autoUnlockCount || 1);
 
-				if (chaptersToUnlock.length > 0) {
+          if (chaptersToUnlock.length > 0) {
+            // 4. Unlock all selected chapters concurrently for performance
+            const unlockPromises = chaptersToUnlock.map(ch =>
+              Chapter.findByIdAndUpdate(ch._id, {
+                isLocked: false,
+                releasedAt: lagosDate, // <--- THIS triggers the "New Release" for RSS
+                scheduledReleaseDate: null // Clear any specific schedule since it just unlocked
+              })
+            );
 
-					// 4. Unlock all selected chapters concurrently for performance
-					const unlockPromises = chaptersToUnlock.map(ch =>
-						Chapter.findByIdAndUpdate(ch._id, {
-							isLocked: false,
-							releasedAt: new Date() // <--- THIS triggers the "New Release" for RSS
-						})
-					);
+            await Promise.all(unlockPromises);
 
-					await Promise.all(unlockPromises);
+            book.lastUnlockedAt = lagosDate;
+            await book.save();
 
-					book.lastUnlockedAt = new Date();
-					await book.save();
+            const unlockedNumbers = chaptersToUnlock.map(ch => ch.chapterNo).join(", ");
+            console.log(`✅ BATCH UNLOCKED: Chapter(s) [${unlockedNumbers}] of "${book.title}"`);
+          } else {
+            console.log(`📘 No locked chapters left for "${book.title}"`);
+          }
+        }
+      }
 
-					const unlockedNumbers = chaptersToUnlock.map(ch => ch.chapterNo).join(", ");
-					console.log(`✅ Unlocked Chapter(s) [${unlockedNumbers}] of "${book.title}"`);
-				} else {
-					console.log(`📘 No locked chapters left for "${book.title}"`);
-				}
-			}
+      // ====================================================================
+      // TASK B: THE SPECIFIC SCHEDULE (Chapter-Level Schedule)
+      // ====================================================================
 
-			// console.log("🎉 Daily unlock job completed!");
-		} catch (err) {
-			console.error("❌ Error unlocking chapters:", err.message);
-		}
-	},
-	{
-		timezone: "Africa/Lagos",
-	}
+      // Find any locked chapter where the scheduled release date has arrived or passed
+      const individuallyScheduledChapters = await Chapter.find({
+        isLocked: true,
+        scheduledReleaseDate: {
+          $ne: null, // Must have a scheduled date
+          $lte: lagosDate // $lte = Less than or equal to current time
+        },
+
+      }).populate('book', 'title');
+
+      if (individuallyScheduledChapters.length > 0) {
+        // Extract the IDs for a fast bulk update
+        const chapterIdsToUnlock = individuallyScheduledChapters.map(ch => ch._id);
+
+        // Update all matching chapters at once for maximum performance
+        await Chapter.updateMany(
+          { _id: { $in: chapterIdsToUnlock } },
+          {
+            $set: {
+              isLocked: false,
+              releasedAt: lagosDate, // <--- Triggers RSS
+              scheduledReleaseDate: null // Clear the schedule to prevent re-querying
+            }
+          }
+        );
+
+        // Log the specific book and chapter details
+        individuallyScheduledChapters.forEach(ch => {
+          const bookTitle = ch.book ? ch.book.title : "Unknown Book";
+          console.log(`🎯 SPECIFIC UNLOCK: Released Chapter ${ch.chapterNo} of "${bookTitle}"`);
+        });
+      }
+
+    } catch (err) {
+      console.error("❌ Error running unlock cron job:", err.message);
+    }
+  },
+  {
+    timezone: "Africa/Lagos",
+  }
 );
