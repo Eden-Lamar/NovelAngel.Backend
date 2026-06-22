@@ -16,10 +16,10 @@ cron.schedule(
   "* * * * *",
   async () => {
     try {
-      // 1. Get current time in Lagos (WAT) in HH:MM format
-      const lagosDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Africa/Lagos" }));
-      const currentHour = String(lagosDate.getHours()).padStart(2, '0');
-      const currentMinute = String(lagosDate.getMinutes()).padStart(2, '0');
+      // 1. Get current time in New York (EST/EDT) in HH:MM format
+      const nyDate = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const currentHour = String(nyDate.getHours()).padStart(2, '0');
+      const currentMinute = String(nyDate.getMinutes()).padStart(2, '0');
       const currentHHMM = `${currentHour}:${currentMinute}`;
 
       // ====================================================================
@@ -39,7 +39,7 @@ cron.schedule(
           // Check safeguard: skip if unlocked today already to prevent double-firing
           if (
             book.lastUnlockedAt &&
-            new Date(book.lastUnlockedAt).toDateString() === lagosDate.toDateString()
+            new Date(book.lastUnlockedAt).toDateString() === nyDate.toDateString()
           ) {
             console.log(`⏭️ Skipping "${book.title}" (already unlocked today)`);
             continue;
@@ -61,14 +61,14 @@ cron.schedule(
             const unlockPromises = chaptersToUnlock.map(ch =>
               Chapter.findByIdAndUpdate(ch._id, {
                 isLocked: false,
-                releasedAt: lagosDate, // <--- THIS triggers the "New Release" for RSS
+                releasedAt: nyDate, // <--- THIS triggers the "New Release" for RSS
                 scheduledReleaseDate: null // Clear any specific schedule since it just unlocked
               })
             );
 
             await Promise.all(unlockPromises);
 
-            book.lastUnlockedAt = lagosDate;
+            book.lastUnlockedAt = nyDate;
             await book.save();
 
             const unlockedNumbers = chaptersToUnlock.map(ch => ch.chapterNo).join(", ");
@@ -88,7 +88,7 @@ cron.schedule(
         isLocked: true,
         scheduledReleaseDate: {
           $ne: null, // Must have a scheduled date
-          $lte: lagosDate // $lte = Less than or equal to current time
+          $lte: nyDate // $lte = Less than or equal to current time
         },
 
       }).populate('book', 'title');
@@ -103,7 +103,7 @@ cron.schedule(
           {
             $set: {
               isLocked: false,
-              releasedAt: lagosDate, // <--- Triggers RSS
+              releasedAt: nyDate, // <--- Triggers RSS
               scheduledReleaseDate: null // Clear the schedule to prevent re-querying
             }
           }
@@ -121,6 +121,6 @@ cron.schedule(
     }
   },
   {
-    timezone: "Africa/Lagos",
+    timezone: "America/New_York",
   }
 );
