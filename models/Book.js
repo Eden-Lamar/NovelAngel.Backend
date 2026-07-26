@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const slugify = require('slugify');
 const { Schema } = mongoose;
 
 const bookSchema = new Schema({
@@ -124,7 +125,26 @@ const bookSchema = new Schema({
 		default: "00:00", // Default to Midnight (24-hour HH:MM format)
 	},
 
+	slug: {
+		type: String,
+		unique: true,
+		index: true
+	},
+
 }, { timestamps: true });
+
+// Add a Pre-save hook to generate the slug
+bookSchema.pre('save', function (next) {
+	// Only generate a new slug if the title was modified (or is new)
+	if (this.isModified('title')) {
+		this.slug = slugify(this.title, {
+			lower: true,      // Convert to lowercase
+			strict: true,     // Strip special characters
+			remove: /[*+~.()'"!:@]/g // Ensure clean URLs
+		});
+	}
+	next();
+});
 
 // Create a text index on title and author for efficient text search
 bookSchema.index({ title: 'text', author: 'text' });
