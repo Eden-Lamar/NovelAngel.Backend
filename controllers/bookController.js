@@ -1,4 +1,5 @@
 // Import the Book model
+const mongoose = require('mongoose');
 const Book = require('../models/Book');
 const Chapter = require('../models/Chapter');
 const User = require('../models/User');
@@ -53,7 +54,7 @@ const searchBooks = async (req, res) => {
 		console.log(query);
 		// 8. Execute the Query with Filters, Sorting, and Pagination
 		const booksPromise = Book.find(query)
-			.select('title author description category chapters bookImage tags status likeCount country views isAutoUnlockEnabled autoUnlockCount autoUnlockTime buyMeACoffeeLink')
+			.select('title slug author description category chapters bookImage tags status likeCount country views isAutoUnlockEnabled autoUnlockCount autoUnlockTime buyMeACoffeeLink')
 			.sort({ createdAt: -1 }) // Apply sorting
 			.skip(skip) // Skip books for pagination
 			.limit(limitNumber) // Limit the number of books returned
@@ -88,15 +89,19 @@ const searchBooks = async (req, res) => {
 
 
 // @description: Get details of a specific book by ID
-// @route GET /api/v1/books/:id
+// @route GET /api/v1/books/:identifier
 // @access public
 
-const getBookById = async (req, res) => {
+const getBookBySlug = async (req, res) => {
 	try {
-		const { id } = req.params;
+		const { identifier } = req.params;
 
-		// Find the book by ID and populate the uploadedBy field with user details
-		const book = await Book.findById(id)
+		// Allow fetching by both ObjectId (old links) or Slug (new links)
+		const isObjectId = mongoose.Types.ObjectId.isValid(identifier);
+		const query = isObjectId ? { _id: identifier } : { slug: identifier };
+
+		// Find the book by query and populate the uploadedBy field with user details
+		const book = await Book.findOne(query)
 			.populate({
 				path: 'uploadedBy',
 				select: 'username -_id'
@@ -224,15 +229,18 @@ const getBookWithComments = async (req, res) => {
 };
 
 //  @description: Get details of a specific chapter by ID within a specific book
-//  @route GET /api/v1/books/:bookId/chapters/:chapterId
+//  @route GET /api/v1/books/:identifier/chapters/:chapterNo
 //  @access public (Optional)
-const getChapterById = async (req, res) => {
+const getChapterBySlugAndNumber = async (req, res) => {
 	try {
-		const { bookId, chapterId } = req.params;
+		const { identifier, chapterNo } = req.params;
 		const userId = req.user ? req.user._id : null; // Only available for logged-in users
 
+		const isObjectId = mongoose.Types.ObjectId.isValid(identifier);
+		const bookQuery = isObjectId ? { _id: identifier } : { slug: identifier };
+
 		// Verify that the book exists
-		const book = await Book.findById(bookId);
+		const book = await Book.findOne(bookQuery);
 		if (!book) {
 			return res.status(404).json({
 				status: 'fail',
@@ -240,13 +248,21 @@ const getChapterById = async (req, res) => {
 			});
 		}
 
+		// Find the specific chapter within the book by using the book's _id and the chapterNo or chapter ID
+		// Allow fetching chapter by either ObjectId or chapter number ---
+		const isChapterObjectId = mongoose.Types.ObjectId.isValid(chapterNo);
+
+		const chapterQuery = isChapterObjectId
+			? { book: book._id, _id: chapterNo }
+			: { book: book._id, chapterNo: Number(chapterNo) };
+
 		// Find the specific chapter within the book
-		const chapter = await Chapter.findById(chapterId).where({ book: bookId });
+		const chapter = await Chapter.findOne(chapterQuery);
 
 		if (!chapter) {
 			return res.status(404).json({
 				status: 'fail',
-				message: 'Chapter not found in the specified book'
+				message: 'Chapter not found'
 			});
 		}
 
@@ -264,7 +280,7 @@ const getChapterById = async (req, res) => {
 				if (user.role === 'admin') {
 					canAccess = true;
 				}	// 2. Grant access if chapter is locked BUT user has unlocked it
-				else if (chapter.isLocked && user.unlockedChapters.includes(chapter._id)) {
+				else if (chapter.isLocked && user.unlockedChapters.some(id => id.equals(chapter._id))) {
 					canAccess = true;
 				}
 
@@ -329,7 +345,7 @@ const getChapterById = async (req, res) => {
 		if (user) {
 			// Check if the BOOK is already in the user's reading history
 			const existingBookIndex = user.readingHistory.findIndex(
-				(history) => history.book.toString() === bookId.toString()
+				(history) => history.book.toString() === book._id.toString()
 			);
 
 			// If the book exists, remove the old entry so we can move it to the top
@@ -340,8 +356,8 @@ const getChapterById = async (req, res) => {
 
 			// add a new entry for the book in reading history
 			user.readingHistory.unshift({
-				book: bookId,
-				lastChapterRead: chapterId,
+				book: book._id,
+				lastChapterRead: chapter._id,
 				createdAt: new Date() // Ensure timestamp is updated
 			});
 
@@ -511,6 +527,7 @@ const getLatestUpdatedBooks = async (req, res) => {
 				$group: {
 					_id: '$_id',
 					title: { $first: '$title' },
+					slug: { $first: '$slug' },
 					bookImage: { $first: '$bookImage' },
 					latestChapter: { $first: '$chaptersData' },
 				}
@@ -528,6 +545,7 @@ const getLatestUpdatedBooks = async (req, res) => {
 
 			return {
 				bookId: book._id,
+				slug: book.slug,
 				title: book.title,
 				bookImage: book.bookImage,
 				latestChapter: {
@@ -607,6 +625,7 @@ const getTrendingBooks = async (req, res) => {
 			{
 				$project: {
 					title: 1,
+					slug: 1,
 					description: 1,
 					country: 1,
 					category: 1,
@@ -682,7 +701,7 @@ const getAllBooks = async (req, res) => {
 			.sort({ createdAt: -1 }) // Sort by creation date descending so that mean the newest books appear first
 			.skip(skip)
 			.limit(limitNumber)
-			.select('title description bookImage status chapters views likeCount country tags isAutoUnlockEnabled autoUnlockCount autoUnlockTime buyMeACoffeeLink'); // Select only necessary fields for listing
+			.select('title slug description bookImage status chapters views likeCount country tags isAutoUnlockEnabled autoUnlockCount autoUnlockTime buyMeACoffeeLink'); // Select only necessary fields for listing
 		const countPromise = Book.countDocuments();
 
 		// Execute both promises in parallel to improve performance that means we are fetching the books and counting the total number of books at the same time
@@ -758,4 +777,4 @@ const toggleAutoUnlock = async (req, res) => {
 	}
 };
 
-module.exports = { searchBooks, getBookById, getChapterById, unlockChapter, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations, getBookComments, getBookWithComments, getAllBooks, toggleAutoUnlock };
+module.exports = { searchBooks, getBookBySlug, getChapterBySlugAndNumber, unlockChapter, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations, getBookComments, getBookWithComments, getAllBooks, toggleAutoUnlock };
