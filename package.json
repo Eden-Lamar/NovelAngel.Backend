@@ -43,6 +43,7 @@
 		"puppeteer-extra": "^3.3.6",
 		"puppeteer-extra-plugin-stealth": "^2.11.2",
 		"rss": "^1.2.2",
-		"sharp": "^0.33.5"
+		"sharp": "^0.33.5",
+		"slugify": "^1.6.9"
 	}
 }
