@@ -224,7 +224,7 @@ const getUserBookmarks = async (req, res) => {
 
 		// Fetch the bookmarks for the user, and populate the book details
 		const bookmarksPromise = await Bookmark.find({ user: userId })
-			.populate('book', 'title bookImage') // Populate book title, author, and creation date
+			.populate('book', 'title bookImage slug') // Populate book title, author, and creation date
 			.skip(skip)
 			.limit(limitNumber)
 			.exec();
@@ -300,7 +300,7 @@ const getContinueReading = async (req, res) => {
 		const user = await User.findById(userId)
 			.populate({
 				path: "readingHistory.book",
-				select: "title bookImage chapters", // fetch these fields
+				select: "title bookImage slug chapters", // fetch these fields
 			})
 			.populate({
 				path: "readingHistory.lastChapterRead",
@@ -330,6 +330,7 @@ const getContinueReading = async (req, res) => {
 			.slice(0, 10)
 			.map((entry) => ({
 				bookId: entry.book?._id,
+				slug: entry.book?.slug,
 				bookTitle: entry.book?.title,
 				bookImage: entry.book?.bookImage,
 				lastChapter: {
