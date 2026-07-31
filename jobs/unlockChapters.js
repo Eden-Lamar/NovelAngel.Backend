@@ -16,11 +16,29 @@ cron.schedule(
   "* * * * *",
   async () => {
     try {
-      // 1. Get current time in New York (EST/EDT) in HH:MM format
-      const nyDate = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-      const currentHour = String(nyDate.getHours()).padStart(2, '0');
-      const currentMinute = String(nyDate.getMinutes()).padStart(2, '0');
-      const currentHHMM = `${currentHour}:${currentMinute}`;
+      // 1. Safely extract exact New York time pieces without local timezone corruption
+      const now = new Date();
+      const opts = { timeZone: "America/New_York" };
+
+      const year = new Intl.DateTimeFormat('en-US', { ...opts, year: 'numeric' }).format(now);
+      const month = new Intl.DateTimeFormat('en-US', { ...opts, month: '2-digit' }).format(now);
+      const day = new Intl.DateTimeFormat('en-US', { ...opts, day: '2-digit' }).format(now);
+      let hour = new Intl.DateTimeFormat('en-US', { ...opts, hour: '2-digit', hour12: false }).format(now);
+      const minute = new Intl.DateTimeFormat('en-US', { ...opts, minute: '2-digit' }).format(now);
+
+      // Handle midnight format edge-case in some Node environments
+      if (hour === '24') hour = '00';
+
+      // ====================================================================
+      // TIME VARIABLES
+      // ====================================================================
+
+      // For Task A: "11:15"
+      const currentHHMM = `${hour}:${minute}`;
+      // For Task A Safeguard: "2026-07-31"
+      const todayNYString = `${year}-${month}-${day}`;
+      // For Task B: Forces the NY clock face into strict UTC to bypass local machine offsets
+      const nyClockFaceUTC = new Date(`${year}-${month}-${day}T${hour}:${minute}:00.000Z`);
 
       // ====================================================================
       // TASK A: THE BATCH UNLOCK (Book-Level Schedule)
@@ -39,7 +57,7 @@ cron.schedule(
           // Check safeguard: skip if unlocked today already to prevent double-firing
           if (
             book.lastUnlockedAt &&
-            new Date(book.lastUnlockedAt).toDateString() === nyDate.toDateString()
+            book.lastUnlockedAt.toISOString().split('T')[0] === todayNYString
           ) {
             console.log(`⏭️ Skipping "${book.title}" (already unlocked today)`);
             continue;
@@ -61,14 +79,14 @@ cron.schedule(
             const unlockPromises = chaptersToUnlock.map(ch =>
               Chapter.findByIdAndUpdate(ch._id, {
                 isLocked: false,
-                releasedAt: nyDate, // <--- THIS triggers the "New Release" for RSS
+                releasedAt: nyClockFaceUTC, // <--- THIS triggers the "New Release" for RSS
                 scheduledReleaseDate: null // Clear any specific schedule since it just unlocked
               })
             );
 
             await Promise.all(unlockPromises);
 
-            book.lastUnlockedAt = nyDate;
+            book.lastUnlockedAt = nyClockFaceUTC;
             await book.save();
 
             const unlockedNumbers = chaptersToUnlock.map(ch => ch.chapterNo).join(", ");
@@ -88,7 +106,7 @@ cron.schedule(
         isLocked: true,
         scheduledReleaseDate: {
           $ne: null, // Must have a scheduled date
-          $lte: nyDate // $lte = Less than or equal to current time
+          $lte: nyClockFaceUTC // $lte = Less than or equal to current time
         },
 
       }).populate('book', 'title');
@@ -103,7 +121,7 @@ cron.schedule(
           {
             $set: {
               isLocked: false,
-              releasedAt: nyDate, // <--- Triggers RSS
+              releasedAt: nyClockFaceUTC, // <--- Triggers RSS
               scheduledReleaseDate: null // Clear the schedule to prevent re-querying
             }
           }
@@ -112,7 +130,7 @@ cron.schedule(
         // Log the specific book and chapter details
         individuallyScheduledChapters.forEach(ch => {
           const bookTitle = ch.book ? ch.book.title : "Unknown Book";
-          console.log(`🎯 SPECIFIC UNLOCK: Released Chapter ${ch.chapterNo} of "${bookTitle}"`);
+          console.log(`\n🎯 SPECIFIC UNLOCK: Released Chapter ${ch.chapterNo} of "${bookTitle}"\n`);
         });
       }
 
