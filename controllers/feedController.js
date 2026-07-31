@@ -34,7 +34,7 @@ const getRSSFeed = async (req, res) => {
 		})
 			.sort({ releasedAt: -1 }) // Sort by newest first
 			.limit(50) // Limit to 50 items (standard for RSS)
-			.populate('book', 'title author bookImage') // We need the Book title for the RSS item title
+			.populate('book', 'title author bookImage slug') // We need the Book title for the RSS item title
 			.exec();
 
 		// 3. Loop through chapters and add them to the feed
@@ -50,7 +50,7 @@ const getRSSFeed = async (req, res) => {
 
 					// The link users click to read the chapter
 					// Matches your frontend route: /book/:bookId/read?chapterId=...
-					url: `${process.env.FRONTEND_USER_URL}/book/${chapter.book._id}/read?chapterId=${chapter._id}`,
+					url: `${process.env.FRONTEND_USER_URL}/book/${chapter.book.slug || chapter.book._id}/chapter/${chapter.chapterNo}`,
 
 					// Unique identifier for this item (prevents duplicate posts)
 					guid: chapter._id.toString(),
