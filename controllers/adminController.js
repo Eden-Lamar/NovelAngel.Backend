@@ -289,7 +289,17 @@ const updateChapter = async (req, res) => {
 		// Update the chapter fields
 		chapter.title = title || chapter.title;
 		chapter.content = content || chapter.content;
+		// Check if the lock status is changing
+		const previousIsLocked = chapter.isLocked;
 		const newIsLocked = isLocked !== undefined ? isLocked : chapter.isLocked;
+
+		// --- NEW: RSS FEED TRIGGER LOGIC ---
+		// If the chapter is becoming FREE, or is free but missing a release date, set releasedAt to NOW.
+		if (newIsLocked === false && (previousIsLocked === true || !chapter.releasedAt)) {
+			chapter.releasedAt = new Date();
+		}
+
+
 		chapter.isLocked = newIsLocked;
 		chapter.coinCost = newIsLocked ? (coinCost !== undefined ? coinCost : chapter.coinCost) : 0;
 
