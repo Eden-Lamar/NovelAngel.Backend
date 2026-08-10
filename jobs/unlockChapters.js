@@ -44,55 +44,61 @@ cron.schedule(
       // TASK A: THE BATCH UNLOCK (Book-Level Schedule)
       // ====================================================================
 
-      // 2. Find books that are enabled AND scheduled for this exact minute
+      // 2. Find ALL books that have daily auto-unlock enabled
       const books = await Book.find({
-        isAutoUnlockEnabled: true,
-        autoUnlockTime: currentHHMM
+        isAutoUnlockEnabled: true
       }).populate("chapters");
 
+      // Calculate current total minutes since midnight New York time
+      const currentTotalMinutes = parseInt(hour, 10) * 60 + parseInt(minute, 10);
+
       if (books.length > 0) {
-        console.log(`🔔 Found ${books.length} book(s) scheduled for batch unlock at ${currentHHMM}`);
-
         for (const book of books) {
-          // Check safeguard: skip if unlocked today already to prevent double-firing
-          if (
-            book.lastUnlockedAt &&
-            book.lastUnlockedAt.toISOString().split('T')[0] === todayNYString
-          ) {
-            console.log(`⏭️ Skipping "${book.title}" (already unlocked today)`);
-            continue;
-          }
+          // Convert the book's specific unlock time to total minutes
+          const [bookHour, bookMin] = (book.autoUnlockTime || "00:00").split(':').map(Number);
+          const bookTotalMinutes = bookHour * 60 + bookMin;
 
-          // Sort chapters by chapterNo
-          const sortedChapters = [...book.chapters].sort((a, b) => a.chapterNo - b.chapterNo);
+          // 3. CHECK: Has the scheduled time arrived OR passed for today?
+          if (currentTotalMinutes >= bookTotalMinutes) {
 
-          // Filter out all locked chapters beyond freeChapters
-          const lockedChapters = sortedChapters.filter(
-            (ch) => ch.isLocked && ch.chapterNo > book.freeChapters
-          );
+            // Check safeguard: skip if it was already successfully unlocked today
+            if (
+              book.lastUnlockedAt &&
+              !isNaN(new Date(book.lastUnlockedAt).getTime()) &&
+              book.lastUnlockedAt.toISOString().split('T')[0] === todayNYString
+            ) {
+              continue;
+            }
 
-          // 3. Slice the exact number of chapters the admin requested (defaults to 1)
-          const chaptersToUnlock = lockedChapters.slice(0, book.autoUnlockCount || 1);
+            // Sort chapters by chapterNo
+            const sortedChapters = [...book.chapters].sort((a, b) => a.chapterNo - b.chapterNo);
 
-          if (chaptersToUnlock.length > 0) {
-            // 4. Unlock all selected chapters concurrently for performance
-            const unlockPromises = chaptersToUnlock.map(ch =>
-              Chapter.findByIdAndUpdate(ch._id, {
-                isLocked: false,
-                releasedAt: nyClockFaceUTC, // <--- THIS triggers the "New Release" for RSS
-                scheduledReleaseDate: null // Clear any specific schedule since it just unlocked
-              })
+            // Filter out all locked chapters beyond freeChapters
+            const lockedChapters = sortedChapters.filter(
+              (ch) => ch.isLocked && ch.chapterNo > book.freeChapters
             );
 
-            await Promise.all(unlockPromises);
+            // Slice the exact number of chapters the admin requested (defaults to 1)
+            const chaptersToUnlock = lockedChapters.slice(0, book.autoUnlockCount || 1);
 
-            book.lastUnlockedAt = nyClockFaceUTC;
-            await book.save();
+            if (chaptersToUnlock.length > 0) {
+              // Unlock all selected chapters concurrently for performance
+              const unlockPromises = chaptersToUnlock.map(ch =>
+                Chapter.findByIdAndUpdate(ch._id, {
+                  isLocked: false,
+                  releasedAt: nyClockFaceUTC, // <--- THIS triggers the "New Release" for RSS
+                  scheduledReleaseDate: null // Clear any specific schedule since it just unlocked
+                })
+              );
 
-            const unlockedNumbers = chaptersToUnlock.map(ch => ch.chapterNo).join(", ");
-            console.log(`✅ BATCH UNLOCKED: Chapter(s) [${unlockedNumbers}] of "${book.title}"`);
-          } else {
-            console.log(`📘 No locked chapters left for "${book.title}"`);
+              await Promise.all(unlockPromises);
+
+              book.lastUnlockedAt = nyClockFaceUTC;
+              await book.save();
+
+              const unlockedNumbers = chaptersToUnlock.map(ch => ch.chapterNo).join(", ");
+              console.log(`✅ BATCH CATCH-UP UNLOCKED: Chapter(s) [${unlockedNumbers}] of "${book.title}"`);
+            }
           }
         }
       }
