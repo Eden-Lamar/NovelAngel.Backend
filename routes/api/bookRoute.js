@@ -1,5 +1,6 @@
 const express = require('express');
 const { searchBooks, getBookBySlug, getChapterBySlugAndNumber, unlockChapter, getNewBooks, getLatestUpdatedBooks, getTrendingBooks, getBookRecommendations, getBookComments, getBookWithComments, getAllBooks, toggleAutoUnlock } = require('../../controllers/bookController');
+const { postChapterToPinterest } = require('../../controllers/pinterestController');
 const { protect, optionalAuthMiddleware } = require("../../middlewares/authMiddleware")
 
 const router = express.Router();
@@ -20,5 +21,7 @@ router.post('/books/:bookId/chapters/:chapterId/unlock', protect, unlockChapter)
 router.get('/books/', getAllBooks); // Get all books with pagination 
 
 router.patch('/books/:id/toggle-auto-unlock', protect, toggleAutoUnlock);
+
+router.post('/books/:bookId/chapters/:chapterId/pinterest', protect, postChapterToPinterest);
 
 module.exports = router;
