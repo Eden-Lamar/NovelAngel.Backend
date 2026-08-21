@@ -1,14 +1,23 @@
-const { GoogleGenAI } = require("@google/genai");
+const { OpenAI } = require("openai");
 const Vocab = require("../models/Vocab");
 
 // --- CONFIGURATION ---
-const PRIMARY_MODEL = "gemini-3-flash-preview";
-const FALLBACK_MODEL = "gemini-2.5-flash";
+const PRIMARY_MODEL = "deepseek/deepseek-v4-flash-0731";
+// const FALLBACK_MODEL = "gemini-2.5-flash";
 
 let primaryQuotaExhausted = false;
 
+
+// Initialize the OpenAI client pointing to OpenRouter
+const openai = new OpenAI({
+	baseURL: "https://openrouter.ai/api/v1",
+	apiKey: process.env.OPENROUTER_API_KEY,
+	// Optional: Add default max retries to let the SDK handle network blips
+	maxRetries: 3,
+});
+
 // Initialize the client
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Helper function
 const escapeRegex = (str) => {
@@ -24,12 +33,12 @@ const sanitizeChineseText = (text) => {
 		.replace(/[a-zA-Z0-9.-]+\.com/gi, '') // Strip hidden URLs
 		.replace(/(69书吧|69shuba|www\.69shuba\.com)/gi, '') // Strip anti-piracy tags
 		.replace(/\(本章完\)\s*$/g, '') // End of chapter marks
-		.replace(/(求|请).*?(票|收藏|推荐|支持|追读|打赏|点赞|月票|订阅).*$/g, '') // Begging for votes
+		.replace(/(求|请|感谢|谢谢).*?(票|收藏|推荐|支持|追读|打赏|点赞|月票|订阅).*$/gm, '') // Begging for votes
 		.trim();
 };
 
 // --- 2. NEW: DYNAMIC SEMANTIC CHUNKING ---
-const chunkText = (text, maxChunkSize = 800) => {
+const chunkText = (text, maxChunkSize = 2500) => {
 	// Split by double newline or single newline to isolate paragraphs
 	const paragraphs = text.split(/\n\s*\n|\n/);
 	const chunks = [];
@@ -47,8 +56,8 @@ const chunkText = (text, maxChunkSize = 800) => {
 				context: lastContext,
 				paraCount: currentParaCount
 			});
-			// Save the last ~200 chars to feed as context to the next chunk
-			lastContext = currentChunk.slice(-200);
+			// Save the last ~300 chars to feed as context to the next chunk
+			lastContext = currentChunk.slice(-300);
 			currentChunk = trimmed + "\n";
 			currentParaCount = 1;
 		} else {
@@ -71,8 +80,11 @@ const chunkText = (text, maxChunkSize = 800) => {
 const parseVocabLine = (line, onLog) => {
 	if (!line || typeof line !== "string") return null;
 
-	const raw = line.trim();
+	let raw = line.trim();
 	if (!raw) return null;
+
+	// NEW: Strip markdown bullets or numbered lists just in case the AI disobeys
+	raw = raw.replace(/^[-*•]\s+/, '').replace(/^\d+\.\s+/, '').trim();
 
 	if (/^[^=]+=[^=]+$/.test(raw)) {
 		const idx = raw.indexOf('=');
@@ -112,10 +124,11 @@ const enforceCanonicalVocab = (text, vocabDocs, chineseSource) => {
 	);
 
 	for (const { original, translation } of sorted) {
-		const escapedOriginal = escapeRegex(original);
 		if (original.length < 2) continue;
 		if (!chineseSource.includes(original)) continue;
 
+		// 1. Fix Leaked Chinese characters
+		const escapedOriginal = escapeRegex(original);
 		const chineseRegex = new RegExp(escapedOriginal, 'g');
 		const beforeFix = output;
 		output = output.replace(chineseRegex, translation);
@@ -123,43 +136,53 @@ const enforceCanonicalVocab = (text, vocabDocs, chineseSource) => {
 		if (output !== beforeFix) {
 			corrections.push(`Fixed leaked Chinese: ${original} → ${translation}`);
 		}
+
+		// 2. Enforce Canonical English Casing
+		// If the translation is standard English text, find any case-insensitive variations 
+		// in the output and force them to match your database exactly.
+		if (/^[a-zA-Z0-9\s]+$/.test(translation)) {
+			const escapedTranslation = escapeRegex(translation);
+			// 'gi' makes it global and case-insensitive. \b ensures we only match whole words.
+			const englishRegex = new RegExp(`\\b${escapedTranslation}\\b`, 'gi');
+			output = output.replace(englishRegex, translation);
+		}
 	}
 	return { output, corrections };
 };
 
-const retryWithBackoff = async (fn, onLog, maxRetries = 3) => {
-	let attempt = 0;
-	let delay = 3000; // Start with a 3-second delay
+// const retryWithBackoff = async (fn, onLog, maxRetries = 3) => {
+// 	let attempt = 0;
+// 	let delay = 3000; // Start with a 3-second delay
 
-	while (attempt <= maxRetries) {
-		try {
-			return await fn();
-		} catch (e) {
-			const status = e?.status;
-			const message = e?.message || "";
+// 	while (attempt <= maxRetries) {
+// 		try {
+// 			return await fn();
+// 		} catch (e) {
+// 			const status = e?.status;
+// 			const message = e?.message || "";
 
-			// Target capacity errors (503, 429) and our structural truncation errors
-			const shouldRetry =
-				status === 500 ||
-				status === 503 ||
-				status === 429 || // Too Many Requests
-				message.includes("Truncation detected") ||
-				/INTERNAL|UNAVAILABLE/i.test(message);
+// 			// Target capacity errors (503, 429) and our structural truncation errors
+// 			const shouldRetry =
+// 				status === 500 ||
+// 				status === 503 ||
+// 				status === 429 || // Too Many Requests
+// 				message.includes("Truncation detected") ||
+// 				/INTERNAL|UNAVAILABLE/i.test(message);
 
-			if (shouldRetry && attempt < maxRetries) {
-				attempt++;
-				onLog("warning", `API busy or validation failed (${status || 'error'}). Retrying chunk (Attempt ${attempt}/${maxRetries}) in ${delay / 1000}s...`);
+// 			if (shouldRetry && attempt < maxRetries) {
+// 				attempt++;
+// 				onLog("warning", `API busy or validation failed (${status || 'error'}). Retrying chunk (Attempt ${attempt}/${maxRetries}) in ${delay / 1000}s...`);
 
-				await new Promise(r => setTimeout(r, delay));
-				delay *= 2; // Double the delay for the next attempt (3s -> 6s -> 12s)
-				continue;
-			}
+// 				await new Promise(r => setTimeout(r, delay));
+// 				delay *= 2; // Double the delay for the next attempt (3s -> 6s -> 12s)
+// 				continue;
+// 			}
 
-			// If we exhaust all retries or hit a fatal error (like 400 Bad Request), throw it
-			throw e;
-		}
-	}
-};
+// 			// If we exhaust all retries or hit a fatal error (like 400 Bad Request), throw it
+// 			throw e;
+// 		}
+// 	}
+// };
 
 const normalizeChapterInput = (title, content) => {
 	const escapedTitle = escapeRegex(title);
@@ -182,73 +205,43 @@ const getVocabData = async (bookId) => {
 	return data;
 };
 
-const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle, onLog = () => { }, signal = null) => {
+const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle, onLog = () => { }) => {
 
-	const getRawText = (response) => {
-		let rawText = null;
-		if (response.text && typeof response.text === 'function') {
-			try { rawText = response.text(); } catch (err) { }
-		}
-		if (!rawText && response.candidates && response.candidates[0]) {
-			rawText = response.candidates[0].content?.parts?.[0]?.text;
-		}
-		return rawText || "";
-	};
+	// const getRawText = (response) => {
+	// 	let rawText = null;
+	// 	if (response.text && typeof response.text === 'function') {
+	// 		try { rawText = response.text(); } catch (err) { }
+	// 	}
+	// 	if (!rawText && response.candidates && response.candidates[0]) {
+	// 		rawText = response.candidates[0].content?.parts?.[0]?.text;
+	// 	}
+	// 	return rawText || "";
+	// };
 
+	// --- NEW: OPENAI SDK API CALL ---
 	const callAI = async (prompt, systemInstruction) => {
-		if (signal?.aborted) throw new Error("ABORTED_BY_CLIENT");
+		const response = await openai.chat.completions.create({
+			model: PRIMARY_MODEL,
+			temperature: 0.1,
+			max_tokens: 8192,
+			messages: [
+				{ role: "system", content: systemInstruction },
+				{ role: "user", content: prompt }
+			]
+		});
 
-		const performRequest = async (modelName) => {
-			return await ai.models.generateContent({
-				model: modelName,
-				config: {
-					systemInstruction,
-					temperature: 0.1, // Slightly raised from 0.0 to prevent severe repetitive loops, but still highly deterministic
-					maxOutputTokens: 8192,
-				},
-				contents: [{ role: 'user', parts: [{ text: prompt }] }]
-			});
-		};
-
-		if (primaryQuotaExhausted) {
-			try {
-				const response = await performRequest(FALLBACK_MODEL);
-				return getRawText(response).trim();
-			} catch (error) {
-				throw error;
-			}
-		}
-
-		try {
-			const response = await performRequest(PRIMARY_MODEL);
-			return getRawText(response).trim();
-		} catch (error) {
-			if (signal?.aborted) throw new Error("ABORTED_BY_CLIENT");
-			const isQuotaError = error?.status === 429 || error?.code === 429 || /quota|exhausted|rate/i.test(error.message || "");
-
-			if (isQuotaError) {
-				primaryQuotaExhausted = true;
-				onLog("warning", `${PRIMARY_MODEL} quota exceeded. Switching to ${FALLBACK_MODEL}.`);
-				try {
-					const response = await performRequest(FALLBACK_MODEL);
-					return getRawText(response).trim();
-				} catch (fallbackError) {
-					throw fallbackError;
-				}
-			}
-			throw error;
-		}
+		// PATCH: Safely fallback to an empty string if OpenRouter returns null content
+		const content = response.choices[0]?.message?.content || "";
+		return content.trim();
 	};
 
 	const callAIWithContext = async (context, mainText, systemInstruction) => {
-		return callAI(
-			`PREVIOUS CONTEXT (DO NOT TRANSLATE THIS):\n${context}\n\nTEXT TO TRANSLATE:\n${mainText}`,
-			systemInstruction
-		);
+		return callAI(`PREVIOUS CONTEXT (DO NOT TRANSLATE):\n${context}\n\nTEXT TO TRANSLATE:\n${mainText}`, systemInstruction);
 	};
 
+
 	try {
-		onLog("info", `Processing Chapter...`);
+		onLog("info", `Processing Chapter with DeepSeek V4 Flash...`);
 		const { vocabDocs } = await getVocabData(bookId);
 
 		// Sanitize first so our Pre-Flight scanner doesn't read garbage HTML
@@ -257,20 +250,33 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle,
 
 		// --- NEW: STEP 1 (PRE-FLIGHT VOCAB EXTRACTION) ---
 		onLog("info", "Pre-flight: Scanning for new terminology...");
-		const extractionInstruction = `Extract NEW proper nouns (Characters, Places, Sects, Martial Arts, Titles/Professions) from this Xianxia text.
-Format: Chinese=English (one per line).
-Do NOT include or overwrite these existing terms: ${vocabDocs.map(v => v.original).join(',')}`;
+
+		// Only tell it to exclude terms if we actually have terms to exclude
+		const excludeText = vocabDocs.length > 0
+			? `\nDo NOT include or overwrite these existing terms: ${vocabDocs.map(v => v.original).join(', ')}`
+			: '';
+
+		// Stricter prompt forbidding markdown
+		const extractionInstruction = `Extract NEW proper nouns (Characters, Places, Sects, Martial Arts, Titles) from this text.
+Format STRICTLY as: Chinese=English (one per line).
+OUTPUT ONLY THE PAIRS. No markdown, no bullet points, no introductory text.${excludeText}`;
 
 		const extractedNewVocab = [];
 		const newVocabSet = new Set();
 
 		try {
-			// Send just the first 1500 characters to cheaply identify the core entities of the chapter
-			const newVocabRaw = await retryWithBackoff(() => callAI(normalizedContent.slice(0, 1500), extractionInstruction), onLog);
+			// Send just the first 2000 characters to cheaply identify the core entities of the chapter
+			const newVocabRaw = await callAI(normalizedContent.slice(0, 2000), extractionInstruction);
+			// // DEBUG: Let's see exactly what DeepSeek is returning!
+			// onLog("info", `--- RAW AI VOCAB OUTPUT START ---\n${newVocabRaw}\n--- RAW AI VOCAB OUTPUT END ---`);
+
 			const lines = newVocabRaw.split('\n');
 
 			for (const line of lines) {
-				const parsed = parseVocabLine(line, () => { });
+				// Aggressively strip bolding, italics, backticks, and extra spaces
+				const cleanedLine = line.replace(/[*`_]/g, '').trim();
+
+				const parsed = parseVocabLine(cleanedLine, onLog);
 				if (parsed && !newVocabSet.has(parsed.original) && !vocabDocs.find(v => v.original === parsed.original)) {
 					newVocabSet.add(parsed.original);
 					extractedNewVocab.push(parsed);
@@ -278,7 +284,7 @@ Do NOT include or overwrite these existing terms: ${vocabDocs.map(v => v.origina
 			}
 			onLog("info", `Pre-flight found ${extractedNewVocab.length} new terms.`);
 		} catch (e) {
-			onLog("warning", "Pre-flight vocab extraction failed. Proceeding with existing DB vocab.");
+			onLog("warning", `Pre-flight vocab extraction failed: ${e.message}. Proceeding with existing DB vocab.`);
 		}
 
 		// --- NEW: STEP 2 (MERGE INTO MASTER VOCAB LIST) ---
@@ -296,7 +302,7 @@ Do NOT include or overwrite these existing terms: ${vocabDocs.map(v => v.origina
 		const titleVocabSection = titleVocabString ? `MANDATORY TERMINOLOGY:\nYou MUST use these exact translations if they appear:\n${titleVocabString}\n\n` : '';
 		const metaInstruction = `Translate the chapter title into natural English for the novel "${bookTitle}".\n${titleVocabSection}Output ONLY the translated title. No chapter numbers.`;
 
-		const translatedTitleRaw = await retryWithBackoff(() => callAI(chineseTitle, metaInstruction), onLog);
+		const translatedTitleRaw = await callAI(chineseTitle, metaInstruction);
 
 		// Enforce using the Master List
 		const { output: fixedTitle } = enforceCanonicalVocab(translatedTitleRaw, masterVocabList, chineseTitle);
@@ -305,7 +311,7 @@ Do NOT include or overwrite these existing terms: ${vocabDocs.map(v => v.origina
 
 		// --- STEP 4: TRANSLATE PROSE (Using Master Vocab) ---
 		onLog("info", "Chunking prose...");
-		const chunks = chunkText(normalizedContent, 800);
+		const chunks = chunkText(normalizedContent, 2500);
 		onLog("info", `Chapter split into ${chunks.length} safe chunks.`);
 
 		let finalTranslatedChunks = [];
@@ -314,7 +320,7 @@ Do NOT include or overwrite these existing terms: ${vocabDocs.map(v => v.origina
 			const chunk = chunks[i];
 			onLog("info", `Translating Chunk ${i + 1}/${chunks.length}...`);
 
-			// Inject ONLY the vocab that appears in this specific 800-character chunk
+			// Inject ONLY the vocab that appears in this specific 2500-character chunk
 			const activeChunkVocab = masterVocabList.filter(v => chunk.text.includes(v.original));
 			const activeChunkVocabString = activeChunkVocab.map(v => `${v.original}=${v.translation}`).join('\n');
 
@@ -326,23 +332,28 @@ ${proseVocabSection}CONSTRAINTS:
 - Output ONLY the translated story prose.
 - Maintain a natural, literary English flow.`;
 
-			const translateAttempt = async () => {
-				let result;
-				if (chunk.context) {
-					result = await callAIWithContext(chunk.context, chunk.text, proseInstruction);
-				} else {
-					result = await callAI(chunk.text, proseInstruction);
-				}
+			// Simplified structural error handling loop
+			let attempt = 0;
+			let chunkSuccess = false;
 
-				const transParas = result.split(/\n\s*\n|\n/).filter(p => p.trim()).length;
-				if (transParas < chunk.paraCount * 0.75) {
-					throw new Error(`Truncation detected: Model returned ${transParas} paragraphs, expected ~${chunk.paraCount}.`);
-				}
-				return result;
-			};
+			while (!chunkSuccess && attempt < 3) {
+				try {
+					let result = chunk.context
+						? await callAIWithContext(chunk.context, chunk.text, proseInstruction)
+						: await callAI(chunk.text, proseInstruction);
 
-			let translatedChunk = await retryWithBackoff(translateAttempt, onLog);
-			finalTranslatedChunks.push(translatedChunk);
+					const transParas = result.split(/\n\s*\n|\n/).filter(p => p.trim()).length;
+					if (transParas < chunk.paraCount * 0.70) {
+						throw new Error(`Truncation detected: Returned ${transParas} paragraphs, expected ~${chunk.paraCount}.`);
+					}
+					finalTranslatedChunks.push(result);
+					chunkSuccess = true;
+				} catch (e) {
+					attempt++;
+					if (attempt >= 3) throw e;
+					onLog("warning", `Truncation validation failed. Retrying Chunk ${i + 1} (Attempt ${attempt}/3)...`);
+				}
+			}
 		}
 
 		onLog("info", "Translation successful 👍🏼 Combining chunks...");
@@ -357,14 +368,61 @@ ${proseVocabSection}CONSTRAINTS:
 		// Punctuation Cleanup (Em-dash replacement)
 		const finalCleanedContent = enforcedContent.replace(/\s*(—|–|--)\s*/g, ', ');
 
+		// --- STEP 4: THE QUALITY SCORING ENGINE ---
+		onLog("info", "Calculating Translation Quality Score...");
+		let qualityScore = 100;
+		const scoreReasons = [];
+
+		const expectedParas = chunks.reduce((sum, chunk) => sum + chunk.paraCount, 0);
+		const actualParas = finalCleanedContent.split(/\n\s*\n|\n/).filter(p => p.trim()).length;
+		const paraDiff = Math.abs(expectedParas - actualParas);
+		if (paraDiff > 0) {
+			const penalty = paraDiff * 3; // -3 points per missing/extra paragraph
+			qualityScore -= penalty;
+			scoreReasons.push(`Structure Penalty (-${penalty}): Expected ~${expectedParas} paragraphs, got ${actualParas}.`);
+		}
+
+		const chineseCharacters = finalCleanedContent.match(/[\u4e00-\u9fa5]/g) || [];
+		if (chineseCharacters.length > 0) {
+			const penalty = chineseCharacters.length * 2; // -2 points per untranslated character
+			qualityScore -= penalty;
+			scoreReasons.push(`Translation Penalty (-${penalty}): Found ${chineseCharacters.length} untranslated Chinese characters.`);
+		}
+
+		// Check C: Glossary Adherence (Now explicitly naming missed terms!)
+		const usedVocab = masterVocabList.filter(v => normalizedContent.includes(v.original));
+		const missedTerms = [];
+
+		// Lowercase the entire text once for efficient checking
+		const contentLower = finalCleanedContent.toLowerCase();
+
+		usedVocab.forEach(v => {
+			const translationLower = v.translation.toLowerCase();
+			// Check if the lowercase version exists in the text
+			if (!contentLower.includes(translationLower)) {
+				// Push the exact term it missed into our array
+				missedTerms.push(`"${v.translation}"`);
+			}
+		});
+
+
+		if (missedTerms.length > 0) {
+			const penalty = missedTerms.length * 4; // -4 points per missed glossary term
+			qualityScore -= penalty;
+			scoreReasons.push(`Glossary Penalty (-${penalty}): Missed ${missedTerms.length} forced term(s) -> ${missedTerms.join(', ')} from the vocabulary database.`);
+		}
+
+		qualityScore = Math.max(0, Math.min(100, qualityScore));
+
 		return {
 			translatedTitle: cleanedTitle,
 			translatedContent: finalCleanedContent,
-			newVocabItems: extractedNewVocab // Return the Pre-Flight terms so your controller saves them
+			newVocabItems: extractedNewVocab, // Return the Pre-Flight terms so your controller saves them
+			qualityScore,
+			scoreReasons
 		};
 
 	} catch (error) {
-		if (error.message === "ABORTED_BY_CLIENT") throw error;
 		onLog("error", `Agent Error: ${error.message}`);
 		throw error;
 	}
