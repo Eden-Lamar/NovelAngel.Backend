@@ -1,126 +1,130 @@
 const Book = require("../models/Book");
-const Mission = require("../models/Mission");
 const Chapter = require("../models/Chapter");
-const { inngest } = require("../inngest/client");
+const Vocab = require("../models/Vocab");
+const { translateChapter, clearVocabCache, resetModelQuotaState } = require("../services/translation.service");
 
-// @description: Fire & Forget Bulk Translation Trigger
-// @route POST /api/v1/agent/bulk-inngest
+
+
+// --- NEW: Helper to convert Quill HTML back to plain text with newlines ---
+const convertHtmlToPlainText = (html) => {
+	if (!html) return "";
+	return html
+		.replace(/<p><br><\/p>/gi, '\n') // Convert Quill's empty line breaks
+		.replace(/<\/p>/gi, '\n')       // Convert end of paragraphs to newlines
+		.replace(/<br\s*\/?>/gi, '\n')  // Convert standard BR tags
+		.replace(/<[^>]+>/g, '')        // Strip all remaining HTML tags (like <p>, <strong>)
+		.replace(/&nbsp;/g, ' ')        // Decode HTML spaces
+		.replace(/\n\s*\n/g, '\n\n')    // Normalize multiple newlines into standard double-spacing
+		.trim();
+};
+
+
+// @description: Translate raw text and return for admin preview
+// @route POST /api/v1/agent/preview
 // @access Private (Admin)
-const bulkTranslateChapters = async (req, res) => {
-	let { bookId, startUrl, limit, coinCost, isLocked } = req.body;
-
-	// Default limit safety
-	limit = limit || 1;
-	if (limit > 50) limit = 50;
-
+const previewTranslation = async (req, res) => {
 	try {
-		const book = await Book.findById(bookId);
+		const { bookId, rawTitle, rawContent } = req.body;
+
+		if (!bookId || !rawTitle || !rawContent) {
+			return res.status(400).json({ status: "fail", error: "Book ID, title, and content are required." });
+		}
+
+		const book = await Book.findById(bookId).select('title');
 		if (!book) {
-			return res.status(404).json({ status: "fail", error: "Book not found" });
+			return res.status(404).json({ status: "fail", error: "Book not found." });
 		}
 
-		// 1. Create the Tracking Mission in the Database
-		const mission = await Mission.create({
-			book: bookId,
-			status: 'running',
-			total: limit,
-			pending: limit,
-			active: 0,
-			completed: 0,
-			failed: 0
-		});
+		// Use your existing translation service!
+		// Strip the HTML out of the Quill editor payload before passing to the AI
+		const cleanPlainTextContent = convertHtmlToPlainText(rawContent);
 
-		// 2. Fire the Inngest Background Event
-		// We pass all the context the worker needs in the "data" payload
-		await inngest.send({
-			name: "agent/translate.bulk",
+		// Use your existing translation service!
+		const { translatedTitle, translatedContent, newVocabItems, qualityScore, scoreReasons } = await translateChapter(
+			rawTitle,
+			cleanPlainTextContent, // <--- Pass the cleaned text!
+			bookId,
+			book.title,
+			(type, msg) => console.log(`[Translate Preview] ${type}: ${msg}`)
+		);
+
+		// Optionally clear cache/quota state after a successful run
+		resetModelQuotaState();
+
+		res.status(200).json({
+			status: "success",
 			data: {
-				missionId: mission._id.toString(),
-				bookId: bookId,
-				startUrl: startUrl,
-				limit: limit,
-				coinCost: coinCost,
-				isLocked: isLocked,
-				userId: req.user._id.toString() // Needed to link the uploader
+				translatedTitle,
+				translatedContent,
+				newVocabItems,
+				qualityScore,
+				scoreReasons
 			}
 		});
 
-		// 3. Respond Immediately (Zero Timeouts!)
-		res.status(200).json({
-			status: "success",
-			message: "Background translation mission queued successfully.",
-			missionId: mission._id
-		});
-
 	} catch (error) {
-		console.error("Bulk Translation Queue Error:", error);
+		console.error("Translation Preview Error:", error);
 		res.status(500).json({ status: "fail", error: error.message });
 	}
 };
 
-// @description: Retry Failed Chapters
-// @route POST /api/v1/agent/retry-failed
+// @description: Save the finalized chapter to the database
+// @route POST /api/v1/agent/publish
 // @access Private (Admin)
-const retryFailedChapters = async (req, res) => {
+const publishChapter = async (req, res) => {
 	try {
-		const { bookId, coinCost, isLocked } = req.body;
+		const { bookId, title, content, coinCost, isLocked, newVocabItems } = req.body;
 
-		// 1. Find all failed chapters for this book
-		const failedChapters = await Chapter.find({ book: bookId, status: "failed" });
-
-		if (failedChapters.length === 0) {
-			return res.status(400).json({ success: false, error: "No failed chapters found to retry." });
+		// 1. Save any new vocabulary discovered during preview
+		if (newVocabItems && newVocabItems.length > 0) {
+			const vocabOps = newVocabItems.map(item => ({
+				updateOne: {
+					filter: { book: bookId, original: item.original },
+					update: { $setOnInsert: { translation: item.translation } },
+					upsert: true
+				}
+			}));
+			const bulkResult = await Vocab.bulkWrite(vocabOps);
+			if (bulkResult.upsertedCount > 0) clearVocabCache(bookId);
 		}
 
-		// 2. Create a new Mission specifically for tracking the retries
-		const newMission = await Mission.create({
+		// 2. Automatically determine the next chapter number
+		const lastChapter = await Chapter.findOne({ book: bookId }).sort({ chapterNo: -1 });
+		const nextChapterNo = lastChapter ? lastChapter.chapterNo + 1 : 1;
+
+		// 3. Determine Lock Status based on Free Chapters allocation
+		let finalIsLocked = isLocked !== undefined ? isLocked : true;
+		const bookDoc = await Book.findById(bookId).select('freeChapters');
+		if (nextChapterNo <= bookDoc.freeChapters) finalIsLocked = false;
+
+		// 4. Create the Chapter
+		const newChapter = await Chapter.create({
+			title,
+			content,
 			book: bookId,
-			total: failedChapters.length,
-			pending: failedChapters.length,
-			active: 0,
-			completed: 0,
-			failed: 0,
-			status: "running"
+			chapterNo: nextChapterNo,
+			isLocked: finalIsLocked,
+			coinCost: finalIsLocked ? (coinCost || 10) : 0,
+			lockedAt: finalIsLocked ? new Date() : null,
+			uploadedBy: req.user._id,
+			status: 'published' // It's human-approved now!
 		});
 
-		// 3. Fire the Inngest Retry Event
-		await inngest.send({
-			name: "agent/translate.retry",
-			data: {
-				missionId: newMission._id.toString(),
-				bookId,
-				coinCost,
-				isLocked,
-				userId: req.user.userId
-			}
+		// 5. Link to Book
+		await Book.findByIdAndUpdate(bookId, {
+			$addToSet: { chapters: newChapter._id }
 		});
 
-		// 4. Send Mission ID back so React can track the progress
-		res.status(200).json({ success: true, missionId: newMission._id });
-
-	} catch (error) {
-		console.error("Retry Failed Error:", error);
-		res.status(500).json({ success: false, error: "Failed to start retry mission" });
-	}
-};
-
-// @description: Poll the Mission Status
-// @route GET /api/v1/agent/mission/:missionId
-// @access Private (Admin)
-const getMissionStatus = async (req, res) => {
-	try {
-		const mission = await Mission.findById(req.params.missionId);
-		if (!mission) {
-			return res.status(404).json({ status: "fail", error: "Mission not found" });
-		}
-
-		res.status(200).json({
+		res.status(201).json({
 			status: "success",
-			mission
+			message: `Chapter ${nextChapterNo} published successfully!`,
+			chapter: newChapter
 		});
+
 	} catch (error) {
+		console.error("Publish Chapter Error:", error);
 		res.status(500).json({ status: "fail", error: error.message });
 	}
 };
 
-module.exports = { bulkTranslateChapters, retryFailedChapters, getMissionStatus };
+module.exports = { previewTranslation, publishChapter };
