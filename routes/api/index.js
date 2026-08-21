@@ -10,6 +10,5 @@ router.use("/payments", require("./paymentsRoute"))
 router.use("/feed", require("./feedRoute"))
 router.use("/agent", require("./agentRoute"))
 router.use("/vocab", require("./vocabRoutes"))
-router.use('/inngest', require('./inngestRoute'));
 
 module.exports = router
