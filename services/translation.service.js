@@ -330,7 +330,10 @@ OUTPUT ONLY THE PAIRS. No markdown, no bullet points, no introductory text.${exc
 ${proseVocabSection}CONSTRAINTS:
 - Translate paragraph by paragraph. Do NOT summarize. Do NOT skip sentences.
 - Output ONLY the translated story prose.
-- Maintain a natural, literary English flow.`;
+- Preserve the original narrative voice, tone, and level of formality.
+- Render names, titles, and terminology consistently.
+- Prefer natural, fluent literary English over overly literal translation.
+- When a term has multiple possible meanings, choose the one that best fits the context of the story.`;
 
 			// Simplified structural error handling loop
 			let attempt = 0;
@@ -392,16 +395,33 @@ ${proseVocabSection}CONSTRAINTS:
 		// Check C: Glossary Adherence (Now explicitly naming missed terms!)
 		const usedVocab = masterVocabList.filter(v => normalizedContent.includes(v.original));
 		const missedTerms = [];
+		const missedTermsData = [];
 
 		// Lowercase the entire text once for efficient checking
 		const contentLower = finalCleanedContent.toLowerCase();
+
+		// Split the raw Chinese text into paragraphs so we can map locations
+		const chineseParagraphs = normalizedContent.split(/\n\s*\n|\n/).filter(p => p.trim());
 
 		usedVocab.forEach(v => {
 			const translationLower = v.translation.toLowerCase();
 			// Check if the lowercase version exists in the text
 			if (!contentLower.includes(translationLower)) {
-				// Push the exact term it missed into our array
-				missedTerms.push(`"${v.translation}"`);
+				// ...find exactly which paragraph(s) the Chinese term appeared in!
+				const foundInParas = [];
+				chineseParagraphs.forEach((para, index) => {
+					if (para.includes(v.original)) foundInParas.push(index + 1);
+				});
+
+				// Save structured data for the React UI
+				missedTermsData.push({
+					term: v.translation,
+					paragraphs: foundInParas
+				});
+
+				// Add to the backend scoring logs
+				const locationStr = foundInParas.length > 0 ? ` (Para ${foundInParas.join(', ')})` : '';
+				missedTerms.push(`"${v.translation}"${locationStr}`);
 			}
 		});
 
@@ -419,7 +439,8 @@ ${proseVocabSection}CONSTRAINTS:
 			translatedContent: finalCleanedContent,
 			newVocabItems: extractedNewVocab, // Return the Pre-Flight terms so your controller saves them
 			qualityScore,
-			scoreReasons
+			scoreReasons,
+			missedTermsData
 		};
 
 	} catch (error) {
