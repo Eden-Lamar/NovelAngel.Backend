@@ -25,6 +25,27 @@ const escapeRegex = (str) => {
 	return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 };
 
+
+// More reliable paragraph counting (prefers real paragraph breaks)
+const countParagraphs = (text) => {
+	if (!text) return 0;
+	return text
+		.split(/\n\s*\n/)                 // Prefer double newlines
+		.map(p => p.trim())
+		.filter(p => p.length > 0).length;
+};
+
+// Normalize text for fuzzy glossary matching
+const normalizeForMatch = (str) => {
+	if (!str) return "";
+	return str
+		.toLowerCase()
+		.replace(/[-–—]/g, " ")
+		.replace(/[^\w\s\u4e00-\u9fff]/g, "") // keep Chinese + alphanumeric
+		.replace(/\s+/g, " ")
+		.trim();
+};
+
 // --- 1. NEW: AGGRESSIVE SANITIZATION ---
 const sanitizeChineseText = (text) => {
 	if (!text) return "";
@@ -32,9 +53,51 @@ const sanitizeChineseText = (text) => {
 		.replace(/[\u200B-\u200D\uFEFF]/g, '') // Remove zero-width hidden characters
 		.replace(/[a-zA-Z0-9.-]+\.com/gi, '') // Strip hidden URLs
 		.replace(/(69书吧|69shuba|www\.69shuba\.com)/gi, '') // Strip anti-piracy tags
-		.replace(/\(本章完\)\s*$/g, '') // End of chapter marks
-		.replace(/(求|请|感谢|谢谢).*?(票|收藏|推荐|支持|追读|打赏|点赞|月票|订阅).*$/gm, '') // Begging for votes
+		// Remove "本章完" and similar end markers
+		.replace(/\(本章完\)\s*$/g, '')
+		.replace(/（本章完）\s*$/g, '')
+		.replace(/正文完\s*$/g, '')
+
+		// Remove common author note / outbound commentary blocks
+		// This targets the typical "author speaking" section at the end
+		.replace(/(?:又是一年|三年后的生日|男女主个性|字数差不多|后面白就用来存稿|正式连载|看到觉得喜欢的请收藏|么么哒|啦啦啦)[\s\S]*$/gi, '')
+
+		// Broader cleanup for vote / collection begging
+		.replace(/(求|请|感谢|谢谢|喜欢的话).*?(票|收藏|推荐|支持|追读|打赏|点赞|月票|订阅|收藏).*?$/gm, '')
+
+		// Remove leftover decorative lines or separators often used before author notes
+		.replace(/^[—–\-_=]{2,}\s*$/gm, '')
+
 		.trim();
+};
+
+const removeAuthorNotes = (text) => {
+	// Common patterns that usually indicate the start of an author note
+	const authorNoteMarkers = [
+		/又是一年/,
+		/男女主/,
+		/字数差不多/,
+		/后面.*存稿/,
+		/正式连载/,
+		/请收藏/,
+		/么么哒/,
+		/啦啦啦/,
+		/作者有话/,
+		/作者的话/,
+		/感言/,
+	];
+
+	for (const marker of authorNoteMarkers) {
+		const match = text.search(marker);
+		if (match > 0) {
+			// Only cut if the marker appears in the last 15% of the text
+			if (match > text.length * 0.85) {
+				return text.slice(0, match).trim();
+			}
+		}
+	}
+
+	return text;
 };
 
 // --- 2. NEW: DYNAMIC SEMANTIC CHUNKING ---
@@ -127,9 +190,9 @@ const enforceCanonicalVocab = (text, vocabDocs, chineseSource) => {
 		if (original.length < 2) continue;
 		if (!chineseSource.includes(original)) continue;
 
-		// 1. Fix Leaked Chinese characters
+		// 1. Always fix leaked Chinese characters
 		const escapedOriginal = escapeRegex(original);
-		const chineseRegex = new RegExp(escapedOriginal, 'g');
+		const chineseRegex = new RegExp(escapedOriginal, "g");
 		const beforeFix = output;
 		output = output.replace(chineseRegex, translation);
 
@@ -137,16 +200,10 @@ const enforceCanonicalVocab = (text, vocabDocs, chineseSource) => {
 			corrections.push(`Fixed leaked Chinese: ${original} → ${translation}`);
 		}
 
-		// 2. Enforce Canonical English Casing
-		// If the translation is standard English text, find any case-insensitive variations 
-		// in the output and force them to match your database exactly.
-		if (/^[a-zA-Z0-9\s]+$/.test(translation)) {
-			const escapedTranslation = escapeRegex(translation);
-			// 'gi' makes it global and case-insensitive. \b ensures we only match whole words.
-			const englishRegex = new RegExp(`\\b${escapedTranslation}\\b`, 'gi');
-			output = output.replace(englishRegex, translation);
-		}
+		// 2. Soft English enforcement (only log major mismatches, don't force awkwardly)
+		// We no longer hard-replace English variants to avoid fighting natural translation
 	}
+
 	return { output, corrections };
 };
 
@@ -246,7 +303,7 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle,
 
 		// Sanitize first so our Pre-Flight scanner doesn't read garbage HTML
 		onLog("info", "Sanitizing source text...");
-		const normalizedContent = sanitizeChineseText(normalizeChapterInput(chineseTitle, chineseContent));
+		const normalizedContent = removeAuthorNotes(sanitizeChineseText(normalizeChapterInput(chineseTitle, chineseContent)));
 
 		// --- NEW: STEP 1 (PRE-FLIGHT VOCAB EXTRACTION) ---
 		onLog("info", "Pre-flight: Scanning for new terminology...");
@@ -257,8 +314,9 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle,
 			: '';
 
 		// Stricter prompt forbidding markdown
-		const extractionInstruction = `Extract NEW proper nouns (Characters, Places, Sects, Martial Arts, Titles) from this text.
+		const extractionInstruction = `Extract NEW proper nouns (Characters, Places, Organizations, Titles, and important Nicknames or terms of address) from this text.
 Format STRICTLY as: Chinese=English (one per line).
+For nicknames and terms of endearment, prefer natural English renderings that can function well as names or forms of address, rather than awkward literal translations.
 OUTPUT ONLY THE PAIRS. No markdown, no bullet points, no introductory text.${excludeText}`;
 
 		const extractedNewVocab = [];
@@ -326,14 +384,28 @@ OUTPUT ONLY THE PAIRS. No markdown, no bullet points, no introductory text.${exc
 
 			const proseVocabSection = activeChunkVocabString ? `MANDATORY TERMINOLOGY:\nYou MUST use these exact translations:\n${activeChunkVocabString}\n\n` : '';
 
-			const proseInstruction = `You are a professional literary translator for a Xianxia web novel.
-${proseVocabSection}CONSTRAINTS:
-- Translate paragraph by paragraph. Do NOT summarize. Do NOT skip sentences.
-- Output ONLY the translated story prose.
-- Preserve the original narrative voice, tone, and level of formality.
-- Render names, titles, and terminology consistently.
-- Prefer natural, fluent literary English over overly literal translation.
-- When a term has multiple possible meanings, choose the one that best fits the context of the story.`;
+			const proseInstruction = `You are a professional literary translator specializing in Chinese web novels (including contemporary, urban, suspense, romance, and xianxia).
+
+${proseVocabSection}CORE RULES:
+- Translate paragraph by paragraph. Do NOT summarize, skip, or merge content unnecessarily.
+- Output ONLY the translated story prose. No explanations, notes, or comments.
+- Prioritize natural, fluent, and elegant literary English over literal word-for-word translation.
+- Preserve the original tone, atmosphere, and narrative voice exactly (sweet, cold, eerie, humorous, violent, tender, etc.).
+- When the original creates a specific mood (especially eerie, unsettling, sarcastic, or intimate), actively maintain that mood in English.
+
+NAME & TERM HANDLING:
+- Always use the mandatory terminology provided.
+- For pet names, nicknames, and terms of endearment, render them naturally in English. Prefer forms that work well as names or natural address, and avoid awkward literal translations.
+- Keep each character’s voice consistent.
+
+STYLE GUIDELINES:
+- Avoid stiff or overly literal phrasing. Prefer what a skilled English novelist would write.
+- Dialogue should sound natural when spoken aloud.
+- Action scenes should be sharp and clear.
+- Emotional or atmospheric scenes should retain their original impact.
+- Do not flatten distinctive stylistic choices from the Chinese text.
+
+When in doubt, choose the version that reads most naturally in English while staying faithful to the meaning and tone.`;
 
 			// Simplified structural error handling loop
 			let attempt = 0;
@@ -345,10 +417,13 @@ ${proseVocabSection}CONSTRAINTS:
 						? await callAIWithContext(chunk.context, chunk.text, proseInstruction)
 						: await callAI(chunk.text, proseInstruction);
 
-					const transParas = result.split(/\n\s*\n|\n/).filter(p => p.trim()).length;
-					if (transParas < chunk.paraCount * 0.70) {
+					const transParas = countParagraphs(result);
+					const minAcceptable = Math.floor(chunk.paraCount * 0.50);
+
+					if (transParas < minAcceptable) {
 						throw new Error(`Truncation detected: Returned ${transParas} paragraphs, expected ~${chunk.paraCount}.`);
 					}
+
 					finalTranslatedChunks.push(result);
 					chunkSuccess = true;
 				} catch (e) {
@@ -377,10 +452,11 @@ ${proseVocabSection}CONSTRAINTS:
 		const scoreReasons = [];
 
 		const expectedParas = chunks.reduce((sum, chunk) => sum + chunk.paraCount, 0);
-		const actualParas = finalCleanedContent.split(/\n\s*\n|\n/).filter(p => p.trim()).length;
+		const actualParas = countParagraphs(finalCleanedContent);
 		const paraDiff = Math.abs(expectedParas - actualParas);
+
 		if (paraDiff > 0) {
-			const penalty = paraDiff * 3; // -3 points per missing/extra paragraph
+			const penalty = Math.min(paraDiff * 1.2, 18); // Cap + softer
 			qualityScore -= penalty;
 			scoreReasons.push(`Structure Penalty (-${penalty}): Expected ~${expectedParas} paragraphs, got ${actualParas}.`);
 		}
@@ -397,42 +473,46 @@ ${proseVocabSection}CONSTRAINTS:
 		const missedTerms = [];
 		const missedTermsData = [];
 
-		// Lowercase the entire text once for efficient checking
-		const contentLower = finalCleanedContent.toLowerCase();
-
-		// Split the raw Chinese text into paragraphs so we can map locations
-		const chineseParagraphs = normalizedContent.split(/\n\s*\n|\n/).filter(p => p.trim());
+		const contentNormalized = normalizeForMatch(finalCleanedContent);
+		const chineseParagraphs = normalizedContent.split(/\n\s*\n/).filter(p => p.trim());
 
 		usedVocab.forEach(v => {
-			const translationLower = v.translation.toLowerCase();
-			// Check if the lowercase version exists in the text
-			if (!contentLower.includes(translationLower)) {
-				// ...find exactly which paragraph(s) the Chinese term appeared in!
+			const target = normalizeForMatch(v.translation);
+
+			// Accept common variants
+			const variants = [
+				target,
+				target.replace(/\s+/g, ""),          // AnXun
+				target.replace(/\s+/g, "-"),         // An-Xun
+				target.replace(/\s+/g, ""),
+			];
+
+			const found = variants.some(variant => contentNormalized.includes(variant));
+
+			if (!found) {
 				const foundInParas = [];
 				chineseParagraphs.forEach((para, index) => {
 					if (para.includes(v.original)) foundInParas.push(index + 1);
 				});
 
-				// Save structured data for the React UI
 				missedTermsData.push({
 					term: v.translation,
 					paragraphs: foundInParas
 				});
 
-				// Add to the backend scoring logs
-				const locationStr = foundInParas.length > 0 ? ` (Para ${foundInParas.join(', ')})` : '';
+				const locationStr = foundInParas.length > 0 ? ` (Para ${foundInParas.join(", ")})` : "";
 				missedTerms.push(`"${v.translation}"${locationStr}`);
 			}
 		});
 
 
 		if (missedTerms.length > 0) {
-			const penalty = missedTerms.length * 4; // -4 points per missed glossary term
+			const penalty = Math.min(missedTerms.length * 3, 15); // -4 points per missed glossary term Softer + capped
 			qualityScore -= penalty;
-			scoreReasons.push(`Glossary Penalty (-${penalty}): Missed ${missedTerms.length} forced term(s) -> ${missedTerms.join(', ')} from the vocabulary database.`);
+			scoreReasons.push(`Glossary Penalty (-${penalty}): Missed ${missedTerms.length} term(s) → ${missedTerms.join(", ")} from the vocabulary database.`);
 		}
 
-		qualityScore = Math.max(0, Math.min(100, qualityScore));
+		qualityScore = Math.max(0, Math.min(100, Math.round(qualityScore)));
 
 		return {
 			translatedTitle: cleanedTitle,
