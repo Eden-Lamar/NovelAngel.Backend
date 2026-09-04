@@ -33,12 +33,14 @@ cron.schedule(
       // TIME VARIABLES
       // ====================================================================
 
-      // For Task A: "11:15"
-      const currentHHMM = `${hour}:${minute}`;
       // For Task A Safeguard: "2026-07-31"
       const todayNYString = `${year}-${month}-${day}`;
       // For Task B: Forces the NY clock face into strict UTC to bypass local machine offsets
       const nyClockFaceUTC = new Date(`${year}-${month}-${day}T${hour}:${minute}:00.000Z`);
+
+      // Start of today in the same "NY wall-clock labeled as UTC" style
+      // Used for the atomic claim boundary
+      const startOfTodayNYAsUTC = new Date(`${todayNYString}T00:00:00.000Z`);
 
       // ====================================================================
       // TASK A: THE BATCH UNLOCK (Book-Level Schedule)
@@ -54,51 +56,64 @@ cron.schedule(
 
       if (books.length > 0) {
         for (const book of books) {
-          // Convert the book's specific unlock time to total minutes
-          const [bookHour, bookMin] = (book.autoUnlockTime || "00:00").split(':').map(Number);
-          const bookTotalMinutes = bookHour * 60 + bookMin;
+          try {
+            // Convert the book's specific unlock time to total minutes
+            const [bookHour, bookMin] = (book.autoUnlockTime || "00:00").split(':').map(Number);
+            const bookTotalMinutes = bookHour * 60 + bookMin;
 
-          // 3. CHECK: Has the scheduled time arrived OR passed for today?
-          if (currentTotalMinutes >= bookTotalMinutes) {
+            // 3. Has the scheduled time arrived or passed for today?
+            if (currentTotalMinutes < bookTotalMinutes) continue;
 
-            // Check safeguard: skip if it was already successfully unlocked today
-            if (
-              book.lastUnlockedAt &&
-              !isNaN(new Date(book.lastUnlockedAt).getTime()) &&
-              book.lastUnlockedAt.toISOString().split('T')[0] === todayNYString
-            ) {
-              continue;
-            }
-
-            // Sort chapters by chapterNo
-            const sortedChapters = [...book.chapters].sort((a, b) => a.chapterNo - b.chapterNo);
-
-            // Filter out all locked chapters beyond freeChapters
-            const lockedChapters = sortedChapters.filter(
-              (ch) => ch.isLocked && ch.chapterNo > book.freeChapters
+            // ATOMIC: only proceeds if lastUnlockedAt is NOT already today.
+            // This is the actual lock — whichever tick gets here first wins.
+            const claimed = await Book.findOneAndUpdate(
+              {
+                _id: book._id,
+                $or: [
+                  { lastUnlockedAt: null },
+                  { lastUnlockedAt: { $lt: new Date(`${todayNYString}T00:00:00.000Z`) } }
+                ]
+              },
+              { $set: { lastUnlockedAt: nyClockFaceUTC } },
+              { new: true }
             );
 
-            // Slice the exact number of chapters the admin requested (defaults to 1)
+            if (!claimed) continue; // another tick already claimed it today
+
+            // Now, and only now, unlock chapters — this book is "ours" for today
+            const sortedChapters = [...book.chapters].sort((a, b) => a.chapterNo - b.chapterNo);
+            const lockedChapters = sortedChapters.filter(ch => ch.isLocked && ch.chapterNo > book.freeChapters);
             const chaptersToUnlock = lockedChapters.slice(0, book.autoUnlockCount || 1);
 
             if (chaptersToUnlock.length > 0) {
-              // Unlock all selected chapters concurrently for performance
-              const unlockPromises = chaptersToUnlock.map(ch =>
+              const unlockPromises = chaptersToUnlock.map((ch) =>
                 Chapter.findByIdAndUpdate(ch._id, {
                   isLocked: false,
-                  releasedAt: nyClockFaceUTC, // <--- THIS triggers the "New Release" for RSS
-                  scheduledReleaseDate: null // Clear any specific schedule since it just unlocked
+                  releasedAt: nyClockFaceUTC,
+                  scheduledReleaseDate: null,
                 })
               );
 
               await Promise.all(unlockPromises);
 
-              book.lastUnlockedAt = nyClockFaceUTC;
-              await book.save();
-
-              const unlockedNumbers = chaptersToUnlock.map(ch => ch.chapterNo).join(", ");
-              console.log(`✅ BATCH CATCH-UP UNLOCKED: Chapter(s) [${unlockedNumbers}] of "${book.title}"`);
+              const unlockedNumbers = chaptersToUnlock
+                .map((ch) => ch.chapterNo)
+                .join(", ");
+              console.log(
+                `✅ BATCH UNLOCKED: Chapter(s) [${unlockedNumbers}] of "${book.title}"`
+              );
+            } else {
+              // We claimed the slot but there were no locked chapters left
+              console.log(
+                `ℹ️  Claimed today's unlock for "${book.title}" but no locked chapters remaining`
+              );
             }
+          } catch (bookErr) {
+            // Isolate failures so one bad book doesn't kill the whole tick
+            console.error(
+              `❌ Error processing book "${book.title || book._id}":`,
+              bookErr.message
+            );
           }
         }
       }
