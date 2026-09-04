@@ -2,7 +2,7 @@ const { OpenAI } = require("openai");
 const Vocab = require("../models/Vocab");
 
 // --- CONFIGURATION ---
-const PRIMARY_MODEL = "deepseek/deepseek-v4-flash-0731";
+const PRIMARY_MODEL = "google/gemini-3.8-flash";
 // const FALLBACK_MODEL = "gemini-2.5-flash";
 
 let primaryQuotaExhausted = false;
@@ -30,9 +30,48 @@ const escapeRegex = (str) => {
 const countParagraphs = (text) => {
 	if (!text) return 0;
 	return text
-		.split(/\n\s*\n/)                 // Prefer double newlines
+		.split(/\n+/) // Split by any number of consecutive newlines
 		.map(p => p.trim())
 		.filter(p => p.length > 0).length;
+};
+
+// DYNAMIC SEMANTIC CHUNKING
+const chunkText = (text, maxChunkSize = 2500) => {
+	// Split consistently by any newline
+	const paragraphs = text.split(/\n+/);
+	const chunks = [];
+	let currentChunk = "";
+	let lastContext = "";
+	let currentParaCount = 0;
+
+	for (const p of paragraphs) {
+		const trimmed = p.trim();
+		if (!trimmed) continue;
+
+		if ((currentChunk.length + trimmed.length) > maxChunkSize && currentChunk.length > 0) {
+			chunks.push({
+				text: currentChunk.trim(),
+				context: lastContext,
+				paraCount: currentParaCount
+			});
+			lastContext = currentChunk.slice(-180);
+			currentChunk = trimmed + "\n\n"; // Standardize to double newlines for output
+			currentParaCount = 1;
+		} else {
+			currentChunk += trimmed + "\n\n";
+			currentParaCount++;
+		}
+	}
+
+	if (currentChunk.trim()) {
+		chunks.push({
+			text: currentChunk.trim(),
+			context: lastContext,
+			paraCount: currentParaCount
+		});
+	}
+
+	return chunks;
 };
 
 // Normalize text for fuzzy glossary matching
@@ -100,45 +139,121 @@ const removeAuthorNotes = (text) => {
 	return text;
 };
 
-// --- 2. NEW: DYNAMIC SEMANTIC CHUNKING ---
-const chunkText = (text, maxChunkSize = 2500) => {
-	// Split by double newline or single newline to isolate paragraphs
-	const paragraphs = text.split(/\n\s*\n|\n/);
-	const chunks = [];
-	let currentChunk = "";
-	let lastContext = "";
-	let currentParaCount = 0;
+const normalizeSpacedPinyin = (text) => {
+	if (!text) return text;
 
-	for (const p of paragraphs) {
-		const trimmed = p.trim();
-		if (!trimmed) continue;
+	// 1) Fix over-compressed English names: AnXun -> An Xun, HuoCheng -> Huo Cheng
+	text = text.replace(
+		/\b([A-Z][a-z]+)([A-Z][a-z]+)\b/g,
+		(match, a, b) => {
+			// Avoid touching normal words; only split likely name compounds
+			return `${a} ${b}`;
+		}
+	);
 
-		if ((currentChunk.length + trimmed.length) > maxChunkSize && currentChunk.length > 0) {
-			chunks.push({
-				text: currentChunk.trim(),
-				context: lastContext,
-				paraCount: currentParaCount
-			});
-			// Save the last ~300 chars to feed as context to the next chunk
-			lastContext = currentChunk.slice(-300);
-			currentChunk = trimmed + "\n";
-			currentParaCount = 1;
+	// 2) Collapse bad spaced pinyin-style handles (Ye Mo Huang Hun -> YeMoHuangHun)
+	// Keep this conservative
+	// text = text.replace(
+	// 	/\b([A-Z][a-z]{1,6})(?:\s+[A-Z][a-z]{1,6}){2,3}\b/g,
+	// 	(match) => match.replace(/\s+/g, '')
+	// );
+
+	return text;
+};
+
+
+const removeNearDuplicateParagraphs = (text) => {
+	const paras = text.split(/\n+/).map(p => p.trim()).filter(Boolean);
+	const result = [];
+	const recentParas = []; // Keep track of last 10 paragraphs
+	let duplicateCount = 0;
+
+	for (const p of paras) {
+		// Extract significant words (4+ letters) for comparison
+		const words = p.toLowerCase().match(/\b[a-z]{4,}\b/g) || [];
+
+		// If it's a very short line (like dialogue), skip deep comparison
+		if (words.length < 3) {
+			result.push(p);
+			recentParas.push({ text: p, words: new Set(words) });
+			if (recentParas.length > 10) recentParas.shift();
+			continue;
+		}
+
+		const wordSet = new Set(words);
+		let isDuplicate = false;
+
+		for (const recent of recentParas) {
+			if (recent.words.size < 3) continue;
+
+			let overlap = 0;
+			for (const w of wordSet) {
+				if (recent.words.has(w)) overlap++;
+			}
+
+			// Calculate Jaccard Similarity (Overlap / Total Unique Words)
+			const union = new Set([...wordSet, ...recent.words]).size;
+			const similarity = overlap / union;
+
+			// If they share more than 50% of significant words, it's a ghost duplicate
+			if (similarity > 0.50) {
+				isDuplicate = true;
+				break;
+			}
+		}
+
+		if (isDuplicate) {
+			duplicateCount++;
 		} else {
-			currentChunk += trimmed + "\n";
-			currentParaCount++;
+			result.push(p);
+			recentParas.push({ text: p, words: wordSet });
+			if (recentParas.length > 10) recentParas.shift();
 		}
 	}
 
-	if (currentChunk.trim()) {
-		chunks.push({
-			text: currentChunk.trim(),
-			context: lastContext,
-			paraCount: currentParaCount
-		});
-	}
-
-	return chunks;
+	return { cleanedText: result.join('\n\n'), duplicateCount };
 };
+
+
+// // --- 2. NEW: DYNAMIC SEMANTIC CHUNKING ---
+// const chunkText = (text, maxChunkSize = 2500) => {
+// 	// Split by double newline or single newline to isolate paragraphs
+// 	const paragraphs = text.split(/\n\s*\n|\n/);
+// 	const chunks = [];
+// 	let currentChunk = "";
+// 	let lastContext = "";
+// 	let currentParaCount = 0;
+
+// 	for (const p of paragraphs) {
+// 		const trimmed = p.trim();
+// 		if (!trimmed) continue;
+
+// 		if ((currentChunk.length + trimmed.length) > maxChunkSize && currentChunk.length > 0) {
+// 			chunks.push({
+// 				text: currentChunk.trim(),
+// 				context: lastContext,
+// 				paraCount: currentParaCount
+// 			});
+// 			// Save the last ~300 chars to feed as context to the next chunk
+// 			lastContext = currentChunk.slice(-180);
+// 			currentChunk = trimmed + "\n";
+// 			currentParaCount = 1;
+// 		} else {
+// 			currentChunk += trimmed + "\n";
+// 			currentParaCount++;
+// 		}
+// 	}
+
+// 	if (currentChunk.trim()) {
+// 		chunks.push({
+// 			text: currentChunk.trim(),
+// 			context: lastContext,
+// 			paraCount: currentParaCount
+// 		});
+// 	}
+
+// 	return chunks;
+// };
 
 const parseVocabLine = (line, onLog) => {
 	if (!line || typeof line !== "string") return null;
@@ -200,9 +315,26 @@ const enforceCanonicalVocab = (text, vocabDocs, chineseSource) => {
 			corrections.push(`Fixed leaked Chinese: ${original} → ${translation}`);
 		}
 
-		// 2. Soft English enforcement (only log major mismatches, don't force awkwardly)
-		// We no longer hard-replace English variants to avoid fighting natural translation
+		// 2. Normalize common English variants of the forced term
+		// Only do this for clean English terms (names, titles, etc.)
+		if (/^[a-zA-Z0-9\s\-']+$/.test(translation)) {
+			const escapedTranslation = escapeRegex(translation);
+
+			// Match common variations: different spacing, hyphens, or case
+			const variantRegex = new RegExp(
+				`\\b${escapedTranslation.replace(/\s+/g, '[\\s\\-]*')}\\b`,
+				"gi"
+			);
+
+			const beforeEnglish = output;
+			output = output.replace(variantRegex, translation);
+
+			if (output !== beforeEnglish) {
+				corrections.push(`Normalized English variant → ${translation}`);
+			}
+		}
 	}
+
 
 	return { output, corrections };
 };
@@ -293,7 +425,7 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle,
 	};
 
 	const callAIWithContext = async (context, mainText, systemInstruction) => {
-		return callAI(`PREVIOUS CONTEXT (DO NOT TRANSLATE):\n${context}\n\nTEXT TO TRANSLATE:\n${mainText}`, systemInstruction);
+		return callAI(`PREVIOUS CONTEXT (for continuity only; DO NOT retranslate or repeat):\n${context}\n\nTEXT TO TRANSLATE (new content only):\n${mainText}`, systemInstruction);
 	};
 
 
@@ -314,10 +446,15 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle,
 			: '';
 
 		// Stricter prompt forbidding markdown
-		const extractionInstruction = `Extract NEW proper nouns (Characters, Places, Organizations, Titles, and important Nicknames or terms of address) from this text.
-Format STRICTLY as: Chinese=English (one per line).
-For nicknames and terms of endearment, prefer natural English renderings that can function well as names or forms of address, rather than awkward literal translations.
-OUTPUT ONLY THE PAIRS. No markdown, no bullet points, no introductory text.${excludeText}`;
+		const extractionInstruction = `Extract NEW proper nouns from the text (Characters, Places, Organizations, Titles, and important Nicknames).
+
+Rules:
+- Format STRICTLY as: Chinese=English (one per line)
+- For real personal names, use clean romanization
+- For descriptive nicknames, online handles, and terms of address, use NATURAL ENGLISH SPACING (e.g., "Snow Veggie" instead of "SnowVeggie", "Baby Mom" instead of "BabyMom").
+- OUTPUT ONLY THE PAIRS. No explanations.
+
+${excludeText}`;
 
 		const extractedNewVocab = [];
 		const newVocabSet = new Set();
@@ -357,10 +494,31 @@ OUTPUT ONLY THE PAIRS. No markdown, no bullet points, no introductory text.${exc
 		const activeTitleVocab = masterVocabList.filter(v => chineseTitle.includes(v.original));
 		const titleVocabString = activeTitleVocab.map(v => `${v.original}=${v.translation}`).join('\n');
 
-		const titleVocabSection = titleVocabString ? `MANDATORY TERMINOLOGY:\nYou MUST use these exact translations if they appear:\n${titleVocabString}\n\n` : '';
-		const metaInstruction = `Translate the chapter title into natural English for the novel "${bookTitle}".\n${titleVocabSection}Output ONLY the translated title. No chapter numbers.`;
+		const titleVocabSection = titleVocabString
+			? `MANDATORY TERMINOLOGY:\nUse these translations if they appear:\n${titleVocabString}\n\n`
+			: '';
 
-		const translatedTitleRaw = await callAI(chineseTitle, metaInstruction);
+		const metaInstruction = `You are translating a Chinese web novel chapter title.
+		${titleVocabSection}Rules:
+		- Output ONLY the translated title.
+		- Do NOT add "Chapter", numbers, explanations, or extra words.
+		- If the title is very short, symbolic, or unusual (for example a single letter or symbol), keep it short and literal. Do NOT expand it into a words.
+		- Never refuse the title and never say it is invalid.
+
+		Translate this title:`;
+
+		let translatedTitleRaw = await callAI(chineseTitle, metaInstruction);
+
+		// Fallback if the model still refuses or returns garbage
+		if (
+			!translatedTitleRaw ||
+			translatedTitleRaw.length > 80 ||
+			/invalid|placeholder|does not contain|please provide/i.test(translatedTitleRaw)
+		) {
+			// Simple fallback: keep the original title cleaned
+			translatedTitleRaw = chineseTitle.replace(/[！!]/g, '!').trim() || "Untitled";
+			onLog("warning", `Title translation failed or refused. Using fallback: "${translatedTitleRaw}"`);
+		}
 
 		// Enforce using the Master List
 		const { output: fixedTitle } = enforceCanonicalVocab(translatedTitleRaw, masterVocabList, chineseTitle);
@@ -382,21 +540,37 @@ OUTPUT ONLY THE PAIRS. No markdown, no bullet points, no introductory text.${exc
 			const activeChunkVocab = masterVocabList.filter(v => chunk.text.includes(v.original));
 			const activeChunkVocabString = activeChunkVocab.map(v => `${v.original}=${v.translation}`).join('\n');
 
-			const proseVocabSection = activeChunkVocabString ? `MANDATORY TERMINOLOGY:\nYou MUST use these exact translations:\n${activeChunkVocabString}\n\n` : '';
+			const proseVocabSection = activeChunkVocabString ? `MANDATORY TERMINOLOGY:\nYou MUST use these exact translations whenever the corresponding Chinese terms appear:\n${activeChunkVocabString}\n\nDo not invent alternative names, spellings, or variations. Keep names compact and consistent. Avoid inserting unnecessary spaces into romanized names.\n\n` : '';
 
 			const proseInstruction = `You are a professional literary translator specializing in Chinese web novels (including contemporary, urban, suspense, romance, and xianxia).
 
 ${proseVocabSection}CORE RULES:
-- Translate paragraph by paragraph. Do NOT summarize, skip, or merge content unnecessarily.
+- Translate STRICTLY paragraph by paragraph. PRESERVE EVERY SINGLE LINE BREAK. Do not merge short paragraphs or dialogue lines together.
 - Output ONLY the translated story prose. No explanations, notes, or comments.
+- Do not use the "Original [English]" format for system text or foreign languages. Output ONLY the English translation.
+- TRANSLATE ALL ASIAN CHARACTERS. Do not leave any Chinese or Japanese text in the English output, even for system prompts, UI text, or stylized brackets.
 - Prioritize natural, fluent, and elegant literary English over literal word-for-word translation.
+- Translate all place names and locations into English
 - Preserve the original tone, atmosphere, and narrative voice exactly (sweet, cold, eerie, humorous, violent, tender, etc.).
 - When the original creates a specific mood (especially eerie, unsettling, sarcastic, or intimate), actively maintain that mood in English.
 
+IMPORTANT:
+- Do not confuse or interchange character names.
+- Preserve who is speaking and who is acting exactly as in the original.
+- Do not repeat previous scenes or paragraphs.
+- Keep English name spacing natural (e.g. "An Xun", not "AnXun").
+- Never replace one character’s name with another character’s name.
+
 NAME & TERM HANDLING:
-- Always use the mandatory terminology provided.
-- For pet names, nicknames, and terms of endearment, render them naturally in English. Prefer forms that work well as names or natural address, and avoid awkward literal translations.
-- Keep each character’s voice consistent.
+-- Always use the mandatory terminology provided.
+- For real names, keep consistent romanization.
+- For nicknames and online handles, prefer natural English renderings when they are clearer and more readable than pure pinyin.
+- Keep each character’s identity consistent.
+
+ANTI-DUPLICATION RULES:
+- Do not repeat scenes, paragraphs, or events already translated.
+- If context is provided, continue forward only. Never retell prior content.
+- Each event should appear once unless the original itself repeats it.
 
 STYLE GUIDELINES:
 - Avoid stiff or overly literal phrasing. Prefer what a skilled English novelist would write.
@@ -417,12 +591,22 @@ When in doubt, choose the version that reads most naturally in English while sta
 						? await callAIWithContext(chunk.context, chunk.text, proseInstruction)
 						: await callAI(chunk.text, proseInstruction);
 
+					// NEW: empty response guard
+					if (!result || !result.trim()) {
+						throw new Error(`Empty model response for chunk ${i + 1}.`);
+					}
+
 					const transParas = countParagraphs(result);
 					const minAcceptable = Math.floor(chunk.paraCount * 0.50);
 
 					if (transParas < minAcceptable) {
-						throw new Error(`Truncation detected: Returned ${transParas} paragraphs, expected ~${chunk.paraCount}.`);
+						throw new Error(`Truncation detected: Returned ${transParas} paragraphs, expected ${chunk.paraCount}.`);
 					}
+
+					// const lastChar = result.trim().slice(-1);
+					// if (!/[.!?”"’'~\]》—…,:]/.test(lastChar)) {
+					// 	throw new Error(`Truncation detected: Output ended abruptly without terminal punctuation (ends with "${lastChar}").`);
+					// }
 
 					finalTranslatedChunks.push(result);
 					chunkSuccess = true;
@@ -437,6 +621,10 @@ When in doubt, choose the version that reads most naturally in English while sta
 		onLog("info", "Translation successful 👍🏼 Combining chunks...");
 		let combinedContent = finalTranslatedChunks.join('\n\n');
 
+		// Run Smart Deduplication
+		const { cleanedText, duplicateCount } = removeNearDuplicateParagraphs(combinedContent);
+		combinedContent = cleanedText;
+
 		// Final enforcement across all combined chunks
 		const { output: enforcedContent, corrections } = enforceCanonicalVocab(combinedContent, masterVocabList, normalizedContent);
 		if (corrections.length > 0) {
@@ -444,7 +632,21 @@ When in doubt, choose the version that reads most naturally in English while sta
 		}
 
 		// Punctuation Cleanup (Em-dash replacement)
-		const finalCleanedContent = enforcedContent.replace(/\s*(—|–|--)\s*/g, ', ');
+		// 1. Scene Separators: Dashes on a line by themselves -> replace with a clean line break
+		let finalCleanedContent = enforcedContent.replace(/^\s*[—–-]{2,}\s*$/gm, '\n\n');
+
+		// 2. Smart Inline Dashes: Check for preceding punctuation
+		finalCleanedContent = finalCleanedContent.replace(/([.!?,;:"'”’\]]?)\s*(?:—|——|--)\s*/g, (match, punctuation) => {
+			if (punctuation) {
+				// If it ends with punctuation (e.g. "flushing. ——"), remove the dash and leave a space
+				return punctuation + ' ';
+			} else {
+				// Otherwise (e.g. "take it apart —— sell"), replace the dash with a comma and a space
+				return ', ';
+			}
+		});
+
+		finalCleanedContent = normalizeSpacedPinyin(finalCleanedContent);
 
 		// --- STEP 4: THE QUALITY SCORING ENGINE ---
 		onLog("info", "Calculating Translation Quality Score...");
@@ -456,16 +658,23 @@ When in doubt, choose the version that reads most naturally in English while sta
 		const paraDiff = Math.abs(expectedParas - actualParas);
 
 		if (paraDiff > 0) {
-			const penalty = Math.min(paraDiff * 1.2, 18); // Cap + softer
+			const penalty = Math.round(Math.min(paraDiff * 1.2, 18)); // Cap + softer
 			qualityScore -= penalty;
-			scoreReasons.push(`Structure Penalty (-${penalty}): Expected ~${expectedParas} paragraphs, got ${actualParas}.`);
+			scoreReasons.push(`Structure Penalty (-${penalty}): Expected ${expectedParas} paragraphs, got ${actualParas}.`);
 		}
 
-		const chineseCharacters = finalCleanedContent.match(/[\u4e00-\u9fa5]/g) || [];
-		if (chineseCharacters.length > 0) {
-			const penalty = chineseCharacters.length * 2; // -2 points per untranslated character
+		// NEW: Severe penalty for AI hallucinations/repetitions
+		if (duplicateCount > 0) {
+			const penalty = duplicateCount * 12; // -12 points per duplicated paragraph
 			qualityScore -= penalty;
-			scoreReasons.push(`Translation Penalty (-${penalty}): Found ${chineseCharacters.length} untranslated Chinese characters.`);
+			scoreReasons.push(`Repetition Penalty (-${penalty}): Detected and stripped ${duplicateCount} duplicated or highly repetitive paragraph(s) from the AI output.`);
+		}
+
+		const asianCharacters = finalCleanedContent.match(/[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]/g) || [];
+		if (asianCharacters.length > 0) {
+			const penalty = asianCharacters.length * 2; // -2 points per untranslated character
+			qualityScore -= penalty;
+			scoreReasons.push(`Translation Penalty (-${penalty}): Found ${asianCharacters.length} untranslated Asian characters.`);
 		}
 
 		// Check C: Glossary Adherence (Now explicitly naming missed terms!)
@@ -473,21 +682,13 @@ When in doubt, choose the version that reads most naturally in English while sta
 		const missedTerms = [];
 		const missedTermsData = [];
 
-		const contentNormalized = normalizeForMatch(finalCleanedContent);
-		const chineseParagraphs = normalizedContent.split(/\n\s*\n/).filter(p => p.trim());
+		// Strip everything except letters and numbers for a bulletproof comparison
+		const contentNormalized = finalCleanedContent.toLowerCase().replace(/[^a-z0-9]/g, "");
+		const chineseParagraphs = normalizedContent.split(/\n+/).filter(p => p.trim());
 
 		usedVocab.forEach(v => {
-			const target = normalizeForMatch(v.translation);
-
-			// Accept common variants
-			const variants = [
-				target,
-				target.replace(/\s+/g, ""),          // AnXun
-				target.replace(/\s+/g, "-"),         // An-Xun
-				target.replace(/\s+/g, ""),
-			];
-
-			const found = variants.some(variant => contentNormalized.includes(variant));
+			const targetNormalized = v.translation.toLowerCase().replace(/[^a-z0-9]/g, "");
+			const found = contentNormalized.includes(targetNormalized);
 
 			if (!found) {
 				const foundInParas = [];
