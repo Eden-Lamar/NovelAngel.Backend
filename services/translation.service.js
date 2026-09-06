@@ -2,7 +2,7 @@ const { OpenAI } = require("openai");
 const Vocab = require("../models/Vocab");
 
 // --- CONFIGURATION ---
-const PRIMARY_MODEL = "google/gemini-3.8-flash";
+const PRIMARY_MODEL = "deepseek/deepseek-v4-flash-0731";
 // const FALLBACK_MODEL = "gemini-2.5-flash";
 
 let primaryQuotaExhausted = false;
