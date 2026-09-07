@@ -2,7 +2,7 @@ const { OpenAI } = require("openai");
 const Vocab = require("../models/Vocab");
 
 // --- CONFIGURATION ---
-const PRIMARY_MODEL = "deepseek/deepseek-v4-flash-0731";
+const PRIMARY_MODEL = "deepseek/deepseek-v4-flash-0731"; // , "deepseek/deepseek-v4-flash-0731", "deepseek/deepseek-v4-pro-0813", "google/gemini-3.8-flash", "moonshotai/kimi-k3"
 // const FALLBACK_MODEL = "gemini-2.5-flash";
 
 let primaryQuotaExhausted = false;
@@ -159,6 +159,28 @@ const normalizeSpacedPinyin = (text) => {
 	// );
 
 	return text;
+};
+
+const looksAbruptlyCut = (text) => {
+	const t = (text || "").trim();
+	if (!t) return true;
+
+	const lastLine = t.split(/\n+/).filter(Boolean).pop() || "";
+	const lastChar = t.slice(-1);
+
+	// Ends mid-word / mid-clause
+	if (/[A-Za-z0-9]$/.test(lastChar) && !/[.!?”"’'~…]/.test(lastChar)) return true;
+
+	// Short trailing line that looks incomplete
+	if (
+		lastLine.length < 40 &&
+		!/[.!?”"’]$/.test(lastLine) &&
+		/\b(heard|said|opened|looked|was|were|the|a|an|to|of|and)\b/i.test(lastLine)
+	) {
+		return true;
+	}
+
+	return false;
 };
 
 
@@ -420,7 +442,14 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle,
 		});
 
 		// PATCH: Safely fallback to an empty string if OpenRouter returns null content
-		const content = response.choices[0]?.message?.content || "";
+		const choice = response.choices[0];
+		const content = choice?.message?.content || "";
+		const finishReason = choice?.finish_reason;
+
+		if (finishReason === "length") {
+			throw new Error("Model hit max_tokens (finish_reason=length).");
+		}
+
 		return content.trim();
 	};
 
@@ -597,10 +626,16 @@ When in doubt, choose the version that reads most naturally in English while sta
 					}
 
 					const transParas = countParagraphs(result);
-					const minAcceptable = Math.floor(chunk.paraCount * 0.50);
+					const minAcceptable = Math.floor(chunk.paraCount * 0.75);
 
 					if (transParas < minAcceptable) {
 						throw new Error(`Truncation detected: Returned ${transParas} paragraphs, expected ${chunk.paraCount}.`);
+					}
+
+					if (looksAbruptlyCut(result)) {
+						throw new Error(
+							`Truncation detected: Chunk appears to end mid-sentence ("${result.trim().slice(-40)}").`
+						);
 					}
 
 					// const lastChar = result.trim().slice(-1);
