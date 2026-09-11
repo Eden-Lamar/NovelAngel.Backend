@@ -430,15 +430,21 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle,
 	// };
 
 	// --- NEW: OPENAI SDK API CALL ---
-	const callAI = async (prompt, systemInstruction) => {
+	const callAI = async (prompt, systemInstruction, options = {}) => {
+		// Default to 8192, but allow overrides
+		const maxTokens = options.maxTokens || 8192;
+		// Default to throwing an error on truncation, but allow bypassing it
+		const throwOnLength = options.throwOnLength !== undefined ? options.throwOnLength : true;
+
 		const response = await openai.chat.completions.create({
 			model: PRIMARY_MODEL,
 			temperature: 0.1,
-			max_tokens: 8192,
+			max_tokens: maxTokens,
 			messages: [
 				{ role: "system", content: systemInstruction },
 				{ role: "user", content: prompt }
-			]
+			],
+			reasoning: { effort: "low" }
 		});
 
 		// PATCH: Safely fallback to an empty string if OpenRouter returns null content
@@ -446,15 +452,15 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle,
 		const content = choice?.message?.content || "";
 		const finishReason = choice?.finish_reason;
 
-		if (finishReason === "length") {
-			throw new Error("Model hit max_tokens (finish_reason=length).");
+		if (!content && finishReason === "length") {
+			onLog("warning", `Model exhausted max_tokens (${maxTokens}) before producing output — likely reasoning overhead.`);
 		}
 
 		return content.trim();
 	};
 
-	const callAIWithContext = async (context, mainText, systemInstruction) => {
-		return callAI(`PREVIOUS CONTEXT (for continuity only; DO NOT retranslate or repeat):\n${context}\n\nTEXT TO TRANSLATE (new content only):\n${mainText}`, systemInstruction);
+	const callAIWithContext = async (context, mainText, systemInstruction, options = {}) => {
+		return callAI(`PREVIOUS CONTEXT (for continuity only; DO NOT retranslate or repeat):\n${context}\n\nTEXT TO TRANSLATE (new content only):\n${mainText}`, systemInstruction, options);
 	};
 
 
@@ -482,6 +488,8 @@ Rules:
 - For real personal names, use clean romanization
 - For descriptive nicknames, online handles, and terms of address, use NATURAL ENGLISH SPACING (e.g., "Snow Veggie" instead of "SnowVeggie", "Baby Mom" instead of "BabyMom").
 - OUTPUT ONLY THE PAIRS. No explanations.
+- If you find no new proper nouns, output exactly "NONE".
+- Do not invent or repeat terms. Stop generating immediately when you have extracted all valid nouns.
 
 ${excludeText}`;
 
@@ -489,16 +497,23 @@ ${excludeText}`;
 		const newVocabSet = new Set();
 
 		try {
+			// 1. FRAME THE TEXT: Clearly label the input so the AI knows what to process
+			const extractionPrompt = `TEXT TO SCAN:\n${normalizedContent.slice(0, 2000)}`;
 			// Send just the first 2000 characters to cheaply identify the core entities of the chapter
-			const newVocabRaw = await callAI(normalizedContent.slice(0, 2000), extractionInstruction);
-			// // DEBUG: Let's see exactly what DeepSeek is returning!
-			// onLog("info", `--- RAW AI VOCAB OUTPUT START ---\n${newVocabRaw}\n--- RAW AI VOCAB OUTPUT END ---`);
+			// Use maxTokens: 1000 (plenty for a 2000 char snippet) and allow truncation
+			const newVocabRaw = await callAI(extractionPrompt, extractionInstruction, { maxTokens: 3000, throwOnLength: false });
+
+			// 2. DEBUG LOG: Let's see exactly what DeepSeek is returning
+			// onLog("info", `--- RAW PRE-FLIGHT AI OUTPUT ---\n${newVocabRaw}\n------------------------------`);
 
 			const lines = newVocabRaw.split('\n');
 
 			for (const line of lines) {
 				// Aggressively strip bolding, italics, backticks, and extra spaces
 				const cleanedLine = line.replace(/[*`_]/g, '').trim();
+
+				// Skip the "NONE" escape hatch or empty lines
+				if (!cleanedLine || cleanedLine === "NONE") continue; // Ignore the empty state output
 
 				const parsed = parseVocabLine(cleanedLine, onLog);
 				if (parsed && !newVocabSet.has(parsed.original) && !vocabDocs.find(v => v.original === parsed.original)) {
