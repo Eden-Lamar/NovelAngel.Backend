@@ -22,6 +22,6 @@ router.get('/books/', getAllBooks); // Get all books with pagination
 
 router.patch('/books/:id/toggle-auto-unlock', protect, toggleAutoUnlock);
 
-router.post('/books/:bookId/chapters/:chapterId/pinterest', protect, postChapterToPinterest);
+router.post('/books/:bookId/chapters/:chapterId/pinterest', protect, postChapterToPinterest); // Post a chapter recap to Pinterest
 
 module.exports = router;
