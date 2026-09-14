@@ -361,6 +361,69 @@ const enforceCanonicalVocab = (text, vocabDocs, chineseSource) => {
 	return { output, corrections };
 };
 
+const correctMissedVocabTerms = async (englishText, chineseParagraphs, missedTermsData, callAI, onLog, abortSignal) => {
+	if (missedTermsData.length === 0) return englishText;
+
+	const englishParagraphs = englishText.split(/\n+/).map(p => p.trim()).filter(Boolean);
+
+	// Safety check: if paragraph counts drifted, we can't trust index alignment — skip rather than corrupt text.
+	if (englishParagraphs.length !== chineseParagraphs.length) {
+		onLog("warning", `Skipping vocab correction pass: paragraph count mismatch (EN ${englishParagraphs.length} vs ZH ${chineseParagraphs.length}).`);
+		return englishText;
+	}
+
+	// Group required terms by paragraph index (1-based, matching missedTermsData)
+	const paraFixMap = new Map(); // index -> [{ original, term }]
+	for (const { term, original, paragraphs } of missedTermsData) {
+		for (const paraIdx of paragraphs) {
+			if (!paraFixMap.has(paraIdx)) paraFixMap.set(paraIdx, []);
+			paraFixMap.get(paraIdx).push({ original, term });
+		}
+	}
+
+	// --- NEW: Create an array of Promises to run in parallel ---
+	const correctionPromises = Array.from(paraFixMap.entries()).map(async ([paraIdx, terms]) => {
+		const targetIdx = paraIdx - 1; // convert to 0-based
+		const paragraph = englishParagraphs[targetIdx];
+
+		if (!paragraph) return 0; // Return 0 corrections if paragraph is missing
+
+		const termList = terms.map(t => `- "${t.original}" MUST be translated as "${t.term}"`).join('\n');
+
+		const correctionInstruction = `You are fixing a single paragraph of an already-translated English novel excerpt because it failed to use mandatory glossary terms.
+
+MANDATORY TERMINOLOGY (the paragraph below currently uses a different word/phrase for these):
+${termList}
+
+Rules:
+- Rewrite the paragraph so it uses the exact mandated English term(s) above wherever the corresponding concept appears.
+- Do NOT change anything else: keep sentence structure, tone, and all other wording as close to the original as possible.
+- Output ONLY the corrected paragraph. No explanations, no quotes, no labels.`;
+
+		try {
+			const corrected = await callAI(paragraph, correctionInstruction, { maxTokens: 1000, signal: abortSignal });
+			if (corrected && corrected.trim()) {
+				englishParagraphs[targetIdx] = corrected.trim();
+				return 1; // Report 1 successful correction
+			}
+		} catch (e) {
+			// NEW: Don't swallow intentional aborts!
+			if (e.name === 'AbortError') throw e;
+			onLog("warning", `Vocab correction failed for paragraph ${paraIdx}: ${e.message}`);
+		}
+		return 0; // Report 0 if failed
+	});
+
+	// Wait for all corrections to finish
+	const correctionResults = await Promise.all(correctionPromises);
+	const correctedCount = correctionResults.reduce((sum, count) => sum + count, 0);
+
+	if (correctedCount > 0) {
+		onLog("info", `🔧 Corrected ${correctedCount} paragraph(s) for missed glossary terms.`);
+	}
+
+	return englishParagraphs.join('\n\n');
+};
 // const retryWithBackoff = async (fn, onLog, maxRetries = 3) => {
 // 	let attempt = 0;
 // 	let delay = 3000; // Start with a 3-second delay
@@ -416,7 +479,7 @@ const getVocabData = async (bookId) => {
 	return data;
 };
 
-const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle, onLog = () => { }) => {
+const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle, onLog = () => { }, abortSignal) => {
 
 	// const getRawText = (response) => {
 	// 	let rawText = null;
@@ -445,6 +508,9 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle,
 				{ role: "user", content: prompt }
 			],
 			reasoning: { effort: "low" }
+		}, {
+			// Pass the signal into the OpenAI SDK's request options
+			signal: options.signal
 		});
 
 		// PATCH: Safely fallback to an empty string if OpenRouter returns null content
@@ -501,7 +567,7 @@ ${excludeText}`;
 			const extractionPrompt = `TEXT TO SCAN:\n${normalizedContent.slice(0, 2000)}`;
 			// Send just the first 2000 characters to cheaply identify the core entities of the chapter
 			// Use maxTokens: 1000 (plenty for a 2000 char snippet) and allow truncation
-			const newVocabRaw = await callAI(extractionPrompt, extractionInstruction, { maxTokens: 3000, throwOnLength: false });
+			const newVocabRaw = await callAI(extractionPrompt, extractionInstruction, { maxTokens: 3000, throwOnLength: false, signal: abortSignal });
 
 			// 2. DEBUG LOG: Let's see exactly what DeepSeek is returning
 			// onLog("info", `--- RAW PRE-FLIGHT AI OUTPUT ---\n${newVocabRaw}\n------------------------------`);
@@ -523,6 +589,7 @@ ${excludeText}`;
 			}
 			onLog("info", `Pre-flight found ${extractedNewVocab.length} new terms.`);
 		} catch (e) {
+			if (e.name === 'AbortError') throw e;
 			onLog("warning", `Pre-flight vocab extraction failed: ${e.message}. Proceeding with existing DB vocab.`);
 		}
 
@@ -546,22 +613,42 @@ ${excludeText}`;
 		${titleVocabSection}Rules:
 		- Output ONLY the translated title.
 		- Do NOT add "Chapter", numbers, explanations, or extra words.
+		- NEVER output Chinese characters.
 		- If the title is very short, symbolic, or unusual (for example a single letter or symbol), keep it short and literal. Do NOT expand it into a words.
 		- Never refuse the title and never say it is invalid.
 
 		Translate this title:`;
 
-		let translatedTitleRaw = await callAI(chineseTitle, metaInstruction);
 
-		// Fallback if the model still refuses or returns garbage
-		if (
-			!translatedTitleRaw ||
-			translatedTitleRaw.length > 80 ||
-			/invalid|placeholder|does not contain|please provide/i.test(translatedTitleRaw)
-		) {
-			// Simple fallback: keep the original title cleaned
-			translatedTitleRaw = chineseTitle.replace(/[！!]/g, '!').trim() || "Untitled";
-			onLog("warning", `Title translation failed or refused. Using fallback: "${translatedTitleRaw}"`);
+		let translatedTitleRaw = "";
+		let titleAttempt = 0;
+		let titleSuccess = false;
+
+		while (!titleSuccess && titleAttempt < 3) {
+			try {
+				// Frame the user prompt so it doesn't just echo the Chinese
+				translatedTitleRaw = await callAI(`Title to translate:\n${chineseTitle}`, metaInstruction, { maxTokens: 800, signal: abortSignal });
+
+				// Reject empty outputs, extreme length (AI chatting), AI refusals, AND any leaked Chinese characters
+				if (
+					!translatedTitleRaw ||
+					translatedTitleRaw.length > 100 ||
+					/invalid|placeholder|does not contain|please provide/i.test(translatedTitleRaw) ||
+					/[\u4e00-\u9fa5]/.test(translatedTitleRaw)
+				) {
+					throw new Error(`Invalid title output (length, refusal, or leaked Chinese): ${translatedTitleRaw}`);
+				}
+
+				titleSuccess = true;
+			} catch (e) {
+				if (e.name === 'AbortError') throw e;
+				titleAttempt++;
+				onLog("warning", `Title translation attempt ${titleAttempt} failed: ${e.message}`);
+				if (titleAttempt >= 3) {
+					// Ultimate fallback to an English string, not the original Chinese
+					translatedTitleRaw = "Untitled";
+				}
+			}
 		}
 
 		// Enforce using the Master List
@@ -632,8 +719,8 @@ When in doubt, choose the version that reads most naturally in English while sta
 			while (!chunkSuccess && attempt < 3) {
 				try {
 					let result = chunk.context
-						? await callAIWithContext(chunk.context, chunk.text, proseInstruction)
-						: await callAI(chunk.text, proseInstruction);
+						? await callAIWithContext(chunk.context, chunk.text, proseInstruction, { signal: abortSignal })
+						: await callAI(chunk.text, proseInstruction, { signal: abortSignal });
 
 					// NEW: empty response guard
 					if (!result || !result.trim()) {
@@ -661,6 +748,7 @@ When in doubt, choose the version that reads most naturally in English while sta
 					finalTranslatedChunks.push(result);
 					chunkSuccess = true;
 				} catch (e) {
+					if (e.name === 'AbortError') throw e;
 					attempt++;
 					if (attempt >= 3) throw e;
 					onLog("warning", `Truncation validation failed. Retrying Chunk ${i + 1} (Attempt ${attempt}/3)...`);
@@ -696,6 +784,11 @@ When in doubt, choose the version that reads most naturally in English while sta
 			}
 		});
 
+		// 3. Dialogue Colon Replacement
+		// Converts: He said: "Hello" -> He said, "Hello"
+		// Matches standard colons or Chinese full-width colons right before any quote mark
+		finalCleanedContent = finalCleanedContent.replace(/[：:](\s*)(?=["'“‘])/g, ',$1');
+
 		finalCleanedContent = normalizeSpacedPinyin(finalCleanedContent);
 
 		// --- STEP 4: THE QUALITY SCORING ENGINE ---
@@ -713,13 +806,22 @@ When in doubt, choose the version that reads most naturally in English while sta
 			scoreReasons.push(`Structure Penalty (-${penalty}): Expected ${expectedParas} paragraphs, got ${actualParas}.`);
 		}
 
-		// NEW: Severe penalty for AI hallucinations/repetitions
+		// Severe penalty for AI hallucinations/repetitions
 		if (duplicateCount > 0) {
 			const penalty = duplicateCount * 12; // -12 points per duplicated paragraph
 			qualityScore -= penalty;
 			scoreReasons.push(`Repetition Penalty (-${penalty}): Detected and stripped ${duplicateCount} duplicated or highly repetitive paragraph(s) from the AI output.`);
 		}
 
+		// Check Title for Asian Characters
+		const titleAsianCharacters = cleanedTitle.match(/[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]/g) || [];
+		if (titleAsianCharacters.length > 0) {
+			const penalty = 15; // Heavy penalty since a Chinese title breaks the UI experience
+			qualityScore -= penalty;
+			scoreReasons.push(`Title Penalty (-${penalty}): The chapter title failed to translate and still contains Chinese characters.`);
+		}
+
+		// Check Content for Asian Characters
 		const asianCharacters = finalCleanedContent.match(/[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]/g) || [];
 		if (asianCharacters.length > 0) {
 			const penalty = asianCharacters.length * 2; // -2 points per untranslated character
@@ -727,38 +829,47 @@ When in doubt, choose the version that reads most naturally in English while sta
 			scoreReasons.push(`Translation Penalty (-${penalty}): Found ${asianCharacters.length} untranslated Asian characters.`);
 		}
 
-		// Check C: Glossary Adherence (Now explicitly naming missed terms!)
+		// Check C: Glossary Adherence — first pass (to find what needs fixing)
 		const usedVocab = masterVocabList.filter(v => normalizedContent.includes(v.original));
-		const missedTerms = [];
-		const missedTermsData = [];
-
-		// Strip everything except letters and numbers for a bulletproof comparison
-		const contentNormalized = finalCleanedContent.toLowerCase().replace(/[^a-z0-9]/g, "");
 		const chineseParagraphs = normalizedContent.split(/\n+/).filter(p => p.trim());
 
-		usedVocab.forEach(v => {
-			const targetNormalized = v.translation.toLowerCase().replace(/[^a-z0-9]/g, "");
-			const found = contentNormalized.includes(targetNormalized);
+		const scanForMissedTerms = (text) => {
+			const contentNormalized = text.toLowerCase().replace(/[^a-z0-9]/g, "");
+			const missed = [];
+			const missedData = [];
 
-			if (!found) {
-				const foundInParas = [];
-				chineseParagraphs.forEach((para, index) => {
-					if (para.includes(v.original)) foundInParas.push(index + 1);
-				});
+			usedVocab.forEach(v => {
+				const targetNormalized = v.translation.toLowerCase().replace(/[^a-z0-9]/g, "");
+				if (!contentNormalized.includes(targetNormalized)) {
+					const foundInParas = [];
+					chineseParagraphs.forEach((para, index) => {
+						if (para.includes(v.original)) foundInParas.push(index + 1);
+					});
 
-				missedTermsData.push({
-					term: v.translation,
-					paragraphs: foundInParas
-				});
+					missedData.push({ term: v.translation, original: v.original, paragraphs: foundInParas });
+					const locationStr = foundInParas.length > 0 ? ` (Para ${foundInParas.join(", ")})` : "";
+					missed.push(`"${v.translation}"${locationStr}`);
+				}
+			});
 
-				const locationStr = foundInParas.length > 0 ? ` (Para ${foundInParas.join(", ")})` : "";
-				missedTerms.push(`"${v.translation}"${locationStr}`);
-			}
-		});
+			return { missed, missedData };
+		};
 
+		let { missed: missedTerms, missedData: missedTermsData } = scanForMissedTerms(finalCleanedContent);
+
+		// Attempt to auto-fix synonym drift (cases enforceCanonicalVocab can't catch)
+		if (missedTermsData.length > 0) {
+			onLog("info", `Attempting to correct ${missedTermsData.length} missed glossary term(s)...`);
+			finalCleanedContent = await correctMissedVocabTerms(finalCleanedContent, chineseParagraphs, missedTermsData, callAI, onLog, abortSignal);
+
+			// Re-scan after correction so the score reflects the fixed text
+			const rescan = scanForMissedTerms(finalCleanedContent);
+			missedTerms = rescan.missed;
+			missedTermsData = rescan.missedData;
+		}
 
 		if (missedTerms.length > 0) {
-			const penalty = Math.min(missedTerms.length * 3, 15); // -4 points per missed glossary term Softer + capped
+			const penalty = Math.min(missedTerms.length * 3, 15);
 			qualityScore -= penalty;
 			scoreReasons.push(`Glossary Penalty (-${penalty}): Missed ${missedTerms.length} term(s) → ${missedTerms.join(", ")} from the vocabulary database.`);
 		}
