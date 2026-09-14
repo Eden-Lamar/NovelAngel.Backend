@@ -4,6 +4,8 @@ const Vocab = require("../models/Vocab");
 const { translateChapter, clearVocabCache, resetModelQuotaState } = require("../services/translation.service");
 
 
+// --- NEW: Global Map to track running translations ---
+const activeTranslations = new Map();
 
 // --- NEW: Helper to convert Quill HTML back to plain text with newlines ---
 const convertHtmlToPlainText = (html) => {
@@ -23,12 +25,20 @@ const convertHtmlToPlainText = (html) => {
 // @route POST /api/v1/agent/preview
 // @access Private (Admin)
 const previewTranslation = async (req, res) => {
-	try {
-		const { bookId, rawTitle, rawContent } = req.body;
+	const { bookId, rawTitle, rawContent } = req.body;
 
-		if (!bookId || !rawTitle || !rawContent) {
-			return res.status(400).json({ status: "fail", error: "Book ID, title, and content are required." });
-		}
+	if (!bookId || !rawTitle || !rawContent) {
+		return res.status(400).json({ status: "fail", error: "Book ID, title, and content are required." });
+	}
+
+	// 1. Create a unique session key for this specific user and book
+	const sessionKey = `${req.user._id}-${bookId}`;
+
+	// 2. Create the AbortController and store it in our global Map
+	const serverAbortController = new AbortController();
+	activeTranslations.set(sessionKey, serverAbortController);
+
+	try {
 
 		const book = await Book.findById(bookId).select('title');
 		if (!book) {
@@ -40,12 +50,13 @@ const previewTranslation = async (req, res) => {
 		const cleanPlainTextContent = convertHtmlToPlainText(rawContent);
 
 		// Use your existing translation service!
-		const { translatedTitle, translatedContent, newVocabItems, qualityScore, scoreReasons } = await translateChapter(
+		const { translatedTitle, translatedContent, newVocabItems, qualityScore, scoreReasons, missedTermsData } = await translateChapter(
 			rawTitle,
 			cleanPlainTextContent, // <--- Pass the cleaned text!
 			bookId,
 			book.title,
-			(type, msg) => console.log(`[Translate Preview] ${type}: ${msg}`)
+			(type, msg) => console.log(`[Translate Preview] ${type}: ${msg}`),
+			serverAbortController.signal
 		);
 
 		// Optionally clear cache/quota state after a successful run
@@ -58,14 +69,38 @@ const previewTranslation = async (req, res) => {
 				translatedContent,
 				newVocabItems,
 				qualityScore,
-				scoreReasons
+				scoreReasons,
+				missedTermsData
 			}
 		});
 
 	} catch (error) {
+		// 4. Safely ignore the error if it was caused by our intentional abort
+		if (error.name === 'AbortError') {
+			return console.log("[Translate Preview] info: Translation successfully aborted. Credits saved.");
+		}
+
 		console.error("Translation Preview Error:", error);
 		res.status(500).json({ status: "fail", error: error.message });
+	} finally {
+		// 4. ALWAYS clean up the Map when the translation finishes (success or fail)
+		activeTranslations.delete(sessionKey);
 	}
+};
+
+// --- NEW: The Kill Switch Controller ---
+const abortTranslation = (req, res) => {
+	const { bookId } = req.body;
+	const sessionKey = `${req.user._id}-${bookId}`;
+
+	if (activeTranslations.has(sessionKey)) {
+		console.log(`[Translate Preview] warning: Kill switch activated by admin. Halting execution...`);
+		activeTranslations.get(sessionKey).abort(); // This fires the AbortError instantly
+		activeTranslations.delete(sessionKey);
+		return res.status(200).json({ status: "success", message: "Translation aborted." });
+	}
+
+	res.status(200).json({ status: "success", message: "No active translation found to abort." });
 };
 
 // @description: Save the finalized chapter to the database
@@ -127,4 +162,4 @@ const publishChapter = async (req, res) => {
 	}
 };
 
-module.exports = { previewTranslation, publishChapter };
+module.exports = { previewTranslation, publishChapter, abortTranslation };
