@@ -589,7 +589,10 @@ ${excludeText}`;
 			}
 			onLog("info", `Pre-flight found ${extractedNewVocab.length} new terms.`);
 		} catch (e) {
-			if (e.name === 'AbortError') throw e;
+			// NEW: If it's an abort, don't fallback—stop everything immediately!
+			if (e.name === 'AbortError' || e.constructor.name === 'APIUserAbortError' || /aborted/i.test(e.message)) {
+				throw e;
+			}
 			onLog("warning", `Pre-flight vocab extraction failed: ${e.message}. Proceeding with existing DB vocab.`);
 		}
 
@@ -641,7 +644,10 @@ ${excludeText}`;
 
 				titleSuccess = true;
 			} catch (e) {
-				if (e.name === 'AbortError') throw e;
+				// NEW: If aborted, break out of the retry loop instantly
+				if (e.name === 'AbortError' || e.constructor.name === 'APIUserAbortError' || /aborted/i.test(e.message)) {
+					throw e;
+				}
 				titleAttempt++;
 				onLog("warning", `Title translation attempt ${titleAttempt} failed: ${e.message}`);
 				if (titleAttempt >= 3) {
@@ -748,7 +754,10 @@ When in doubt, choose the version that reads most naturally in English while sta
 					finalTranslatedChunks.push(result);
 					chunkSuccess = true;
 				} catch (e) {
-					if (e.name === 'AbortError') throw e;
+					// NEW: If aborted, stop retrying chunks immediately
+					if (e.name === 'AbortError' || e.constructor.name === 'APIUserAbortError' || /aborted/i.test(e.message)) {
+						throw e;
+					}
 					attempt++;
 					if (attempt >= 3) throw e;
 					onLog("warning", `Truncation validation failed. Retrying Chunk ${i + 1} (Attempt ${attempt}/3)...`);
