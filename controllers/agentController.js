@@ -76,7 +76,7 @@ const previewTranslation = async (req, res) => {
 
 	} catch (error) {
 		// 4. Safely ignore the error if it was caused by our intentional abort
-		if (error.name === 'AbortError') {
+		if (error.name === 'AbortError' || error.constructor.name === 'APIUserAbortError' || /aborted/i.test(error.message)) {
 			return console.log("[Translate Preview] info: Translation successfully aborted. Credits saved.");
 		}
 
@@ -88,7 +88,9 @@ const previewTranslation = async (req, res) => {
 	}
 };
 
-// --- NEW: The Kill Switch Controller ---
+// @description: Abort an ongoing translation preview
+// @route POST /api/v1/agent/abort
+// @access Private (Admin)
 const abortTranslation = (req, res) => {
 	const { bookId } = req.body;
 	const sessionKey = `${req.user._id}-${bookId}`;
