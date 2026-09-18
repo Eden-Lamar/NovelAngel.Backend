@@ -1,6 +1,11 @@
 const { join } = require('path');
 
-module.exports = {
-  // Directs Puppeteer to store Chrome inside your project folder on Render
-  cacheDirectory: join(__dirname, '.cache', 'puppeteer'),
-};
+const config = {};
+
+// Render automatically sets process.env.RENDER to 'true'
+// This ensures the custom cache path is ONLY used in production
+if (process.env.RENDER || process.env.NODE_ENV === 'production') {
+  config.cacheDirectory = join(__dirname, '.cache', 'puppeteer');
+}
+
+module.exports = config;
