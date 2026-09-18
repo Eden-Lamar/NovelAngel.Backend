@@ -36,8 +36,21 @@ cron.schedule(
       // For Task A Safeguard: "2026-07-31"
       const todayNYString = `${year}-${month}-${day}`;
       // For Task B: Forces the NY clock face into strict UTC to bypass local machine offsets
-      const nyClockFaceUTC = new Date(`${year}-${month}-${day}T${hour}:${minute}:00.000Z`);
+      const nyClockFaceUTC = new Date(Date.UTC(
+            Number(year),
+            Number(month) - 1,  // JS months are 0-indexed
+            Number(day),
+            Number(hour),
+            Number(minute),
+            0, 0
+          ));
 
+        if (isNaN(nyClockFaceUTC.getTime())) {
+          console.error(
+            `❌ Invalid nyClockFaceUTC — raw values: year=${year} month=${month} day=${day} hour=${hour} minute=${minute}`
+          );
+          return; // skip this tick entirely; next minute retries cleanly
+        }
       // Start of today in the same "NY wall-clock labeled as UTC" style
       // Used for the atomic claim boundary
       const startOfTodayNYAsUTC = new Date(`${todayNYString}T00:00:00.000Z`);
