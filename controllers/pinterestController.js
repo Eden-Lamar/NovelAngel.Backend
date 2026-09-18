@@ -166,7 +166,8 @@ const postChapterToPinterest = async (req, res) => {
                         align-items: center;   /* NEW: Vertically centers them */
                         gap: 15px;             /* NEW: Adds space between logo and text */
                         font-size: 32px; 
-                        color: #fff1a1; 
+                        color: #fff1a1;
+												text-transform: capitalize; 
                         margin-bottom: 30px; 
                         flex-shrink: 0; 
                     }
@@ -197,7 +198,7 @@ const postChapterToPinterest = async (req, res) => {
             <body>
                 <div class="book-title">
                     <img src="${APP_LOGO_BASE64}" class="app-logo" alt="App Logo" />
-                    <span>Novel Title - ${book.title}, Chapter ${chapter.chapterNo} - read now on Novel Angel</span>
+                    <span>Novel Title - ${book.title.toLowerCase()}, Chapter ${chapter.chapterNo} - read now on Novel Angel</span>
                 </div>
                 <div class="recap-wrapper">
                     <div class="recap-text">${formattedRecapText.replace(/\n/g, '<br/>')}</div>
