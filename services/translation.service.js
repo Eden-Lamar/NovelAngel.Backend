@@ -362,28 +362,56 @@ const correctMissedVocabTerms = async (englishText, chineseParagraphs, missedTer
 	if (missedTermsData.length === 0) return englishText;
 
 	const englishParagraphs = englishText.split(/\n+/).map(p => p.trim()).filter(Boolean);
+	const isSynced = englishParagraphs.length === chineseParagraphs.length;
 
-	// Safety check: if paragraph counts drifted, we can't trust index alignment — skip rather than corrupt text.
-	if (englishParagraphs.length !== chineseParagraphs.length) {
-		onLog("warning", `Skipping vocab correction pass: paragraph count mismatch (EN ${englishParagraphs.length} vs ZH ${chineseParagraphs.length}).`);
-		return englishText;
+	if (!isSynced) {
+		onLog("warning", `Paragraph count mismatch (EN ${englishParagraphs.length} vs ZH ${chineseParagraphs.length}). Switching to fuzzy keyword targeting...`);
 	}
 
-	// Group required terms by paragraph index (1-based, matching missedTermsData)
-	const paraFixMap = new Map(); // index -> [{ original, term }]
+	const paraFixMap = new Map(); // targetIdx -> [{ original, term }]
+
 	for (const { term, original, paragraphs } of missedTermsData) {
-		for (const paraIdx of paragraphs) {
-			if (!paraFixMap.has(paraIdx)) paraFixMap.set(paraIdx, []);
-			paraFixMap.get(paraIdx).push({ original, term });
+		let targetIndices = [];
+
+		if (isSynced) {
+			// Exact 1:1 mapping (convert to 0-based index)
+			targetIndices = paragraphs.map(p => p - 1);
+		} else {
+			// Fuzzy Keyword Targeting
+			// Break the mandatory term into significant words (e.g. "Patrick Ewing" -> ["Patrick", "Ewing"])
+			const words = term.split(/[\s\-]+/).filter(w => w.length > 2);
+
+			englishParagraphs.forEach((enPara, idx) => {
+				// Search for any piece of the English name (using word boundaries to avoid false positives)
+				const hasPartialMatch = words.some(w => {
+					const regex = new RegExp(`\\b${escapeRegex(w)}\\b`, 'i');
+					return regex.test(enPara);
+				});
+
+				// If we find a partial English match, or the raw Chinese leaked, flag this paragraph
+				if (hasPartialMatch || enPara.includes(original)) {
+					targetIndices.push(idx);
+				}
+			});
+		}
+
+		for (const targetIdx of targetIndices) {
+			if (targetIdx >= 0 && targetIdx < englishParagraphs.length) {
+				if (!paraFixMap.has(targetIdx)) paraFixMap.set(targetIdx, []);
+				// Prevent duplicate instructions for the same paragraph
+				if (!paraFixMap.get(targetIdx).some(t => t.term === term)) {
+					paraFixMap.get(targetIdx).push({ original, term });
+				}
+			}
 		}
 	}
 
-	// --- NEW: Create an array of Promises to run in parallel ---
-	const correctionPromises = Array.from(paraFixMap.entries()).map(async ([paraIdx, terms]) => {
-		const targetIdx = paraIdx - 1; // convert to 0-based
-		const paragraph = englishParagraphs[targetIdx];
+	if (paraFixMap.size === 0) return englishText; // Nothing found to fix
 
-		if (!paragraph) return 0; // Return 0 corrections if paragraph is missing
+	// --- Execute Corrections in Parallel ---
+	const correctionPromises = Array.from(paraFixMap.entries()).map(async ([targetIdx, terms]) => {
+		const paragraph = englishParagraphs[targetIdx];
+		if (!paragraph) return 0;
 
 		const termList = terms.map(t => `- "${t.original}" MUST be translated as "${t.term}"`).join('\n');
 
@@ -398,20 +426,18 @@ Rules:
 - Output ONLY the corrected paragraph. No explanations, no quotes, no labels.`;
 
 		try {
-			const corrected = await callAI(paragraph, correctionInstruction, { maxTokens: 1000, signal: abortSignal });
+			const corrected = await callAI(paragraph, correctionInstruction, { maxTokens: 2000, signal: abortSignal });
 			if (corrected && corrected.trim()) {
 				englishParagraphs[targetIdx] = corrected.trim();
-				return 1; // Report 1 successful correction
+				return 1;
 			}
 		} catch (e) {
-			// NEW: Don't swallow intentional aborts!
-			if (e.name === 'AbortError') throw e;
-			onLog("warning", `Vocab correction failed for paragraph ${paraIdx}: ${e.message}`);
+			if (e.name === 'AbortError' || e.constructor.name === 'APIUserAbortError' || /aborted/i.test(e.message)) throw e;
+			onLog("warning", `Vocab correction failed for target paragraph: ${e.message}`);
 		}
-		return 0; // Report 0 if failed
+		return 0;
 	});
 
-	// Wait for all corrections to finish
 	const correctionResults = await Promise.all(correctionPromises);
 	const correctedCount = correctionResults.reduce((sum, count) => sum + count, 0);
 
