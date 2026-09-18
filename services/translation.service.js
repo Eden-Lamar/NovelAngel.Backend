@@ -139,26 +139,23 @@ const removeAuthorNotes = (text) => {
 	return text;
 };
 
-const normalizeSpacedPinyin = (text) => {
+const NAME_PARTICLES = /^(Mc|Mac|De|Da|Di|Du|Van|Von|La|Le|O|St|Des|Del|Della)$/;
+
+const normalizeSpacedPinyin = (text, protectedTerms = []) => {
 	if (!text) return text;
 
-	// 1) Fix over-compressed English names: AnXun -> An Xun, HuoCheng -> Huo Cheng
-	text = text.replace(
-		/\b([A-Z][a-z]+)([A-Z][a-z]+)\b/g,
-		(match, a, b) => {
-			// Avoid touching normal words; only split likely name compounds
-			return `${a} ${b}`;
-		}
+	// Build a set of exact canonical forms we must never touch
+	const protectedSet = new Set(
+		protectedTerms
+			.flatMap(t => String(t).split(/\s+/))
+			.filter(Boolean)
 	);
 
-	// 2) Collapse bad spaced pinyin-style handles (Ye Mo Huang Hun -> YeMoHuangHun)
-	// Keep this conservative
-	// text = text.replace(
-	// 	/\b([A-Z][a-z]{1,6})(?:\s+[A-Z][a-z]{1,6}){2,3}\b/g,
-	// 	(match) => match.replace(/\s+/g, '')
-	// );
-
-	return text;
+	return text.replace(/\b([A-Z][a-z]+)([A-Z][a-z]+)\b/g, (match, a, b) => {
+		if (protectedSet.has(match)) return match;   // exact glossary token
+		if (NAME_PARTICLES.test(a)) return match;    // McKinney, DeAndre, LaMarcus
+		return `${a} ${b}`;
+	});
 };
 
 const looksAbruptlyCut = (text) => {
@@ -547,15 +544,23 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle,
 			: '';
 
 		// Stricter prompt forbidding markdown
-		const extractionInstruction = `Extract NEW proper nouns from the text (Characters, Places, Organizations, Titles, and important Nicknames).
+		const extractionInstruction = `Extract NEW proper nouns from the text (Characters, Places, Organizations, Titles, and important Nicknames/aliases).
 
-Rules:
-- Format STRICTLY as: Chinese=English (one per line)
-- For real personal names, use clean romanization
-- For descriptive nicknames, online handles, and terms of address, use NATURAL ENGLISH SPACING (e.g., "Snow Veggie" instead of "SnowVeggie", "Baby Mom" instead of "BabyMom").
-- OUTPUT ONLY THE PAIRS. No explanations.
+TRANSLITERATION RULE (Most Important):
+Chinese fiction often phonetically transliterates foreign names. For each name, decide which case applies:
+- If the Chinese characters are a PHONETIC TRANSLITERATION of a Western name, output the REAL, STANDARD SPELLING of that name, not pinyin (e.g., 罗杰=Roger NOT Luo Jie; 麦金尼=McKinney NOT Mai Jin Ni).
+- If the name is a genuine Chinese name, use standard pinyin (e.g., 林小雨=Lin Xiaoyu).
+- Use the setting and surrounding context to decide. If the story is set outside China or the surrounding names are Western, assume transliteration.
+- For real public figures, athletes, or historical people, use their actual documented English name.
+
+ALIASES & NICKNAMES:
+If a term is a nickname or alias for another person, translate it directly to the exact same English name/nickname used for that person (e.g., 鲨鱼=Shaq, 奥尼尔=Shaq). 
+
+Format STRICTLY:
+- One entry per line: Chinese=English
+- For descriptive nicknames, use NATURAL ENGLISH SPACING ("Snow Veggie", not "SnowVeggie").
+- OUTPUT ONLY THE PAIRS. No explanations, no markdown.
 - If you find no new proper nouns, output exactly "NONE".
-- Do not invent or repeat terms. Stop generating immediately when you have extracted all valid nouns.
 
 ${excludeText}`;
 
@@ -772,15 +777,9 @@ When in doubt, choose the version that reads most naturally in English while sta
 		const { cleanedText, duplicateCount } = removeNearDuplicateParagraphs(combinedContent);
 		combinedContent = cleanedText;
 
-		// Final enforcement across all combined chunks
-		const { output: enforcedContent, corrections } = enforceCanonicalVocab(combinedContent, masterVocabList, normalizedContent);
-		if (corrections.length > 0) {
-			onLog("warning", `🔧 Fixed ${corrections.length} leaked Chinese terms post-translation.`);
-		}
-
 		// Punctuation Cleanup (Em-dash replacement)
 		// 1. Scene Separators: Dashes on a line by themselves -> replace with a clean line break
-		let finalCleanedContent = enforcedContent.replace(/^\s*[—–-]{2,}\s*$/gm, '\n\n');
+		let finalCleanedContent = combinedContent.replace(/^\s*[—–-]{2,}\s*$/gm, '\n\n');
 
 		// 2. Smart Inline Dashes: Check for preceding punctuation
 		finalCleanedContent = finalCleanedContent.replace(/([.!?,;:"'”’\]]?)\s*(?:—|——|--)\s*/g, (match, punctuation) => {
@@ -798,7 +797,18 @@ When in doubt, choose the version that reads most naturally in English while sta
 		// Matches standard colons or Chinese full-width colons right before any quote mark
 		finalCleanedContent = finalCleanedContent.replace(/[：:](\s*)(?=["'“‘])/g, ',$1');
 
-		finalCleanedContent = normalizeSpacedPinyin(finalCleanedContent);
+		// 4. Normalize Pinyin (Run this BEFORE the enforcer!)
+		finalCleanedContent = normalizeSpacedPinyin(
+			finalCleanedContent,
+			masterVocabList.map(v => v.translation)
+		);
+
+		// Final enforcement across all combined chunks
+		const { output: enforcedContent, corrections } = enforceCanonicalVocab(finalCleanedContent, masterVocabList, normalizedContent);
+		if (corrections.length > 0) {
+			onLog("warning", `🔧 Fixed ${corrections.length} leaked Chinese terms post-translation.`);
+		}
+
 
 		// --- STEP 4: THE QUALITY SCORING ENGINE ---
 		onLog("info", "Calculating Translation Quality Score...");
