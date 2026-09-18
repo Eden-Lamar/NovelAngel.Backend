@@ -572,7 +572,7 @@ ${excludeText}`;
 			const extractionPrompt = `TEXT TO SCAN:\n${normalizedContent.slice(0, 2000)}`;
 			// Send just the first 2000 characters to cheaply identify the core entities of the chapter
 			// Use maxTokens: 1000 (plenty for a 2000 char snippet) and allow truncation
-			const newVocabRaw = await callAI(extractionPrompt, extractionInstruction, { maxTokens: 3000, throwOnLength: false, signal: abortSignal });
+			const newVocabRaw = await callAI(extractionPrompt, extractionInstruction, { maxTokens: 4000, throwOnLength: false, signal: abortSignal });
 
 			// 2. DEBUG LOG: Let's see exactly what DeepSeek is returning
 			// onLog("info", `--- RAW PRE-FLIGHT AI OUTPUT ---\n${newVocabRaw}\n------------------------------`);
@@ -852,22 +852,52 @@ When in doubt, choose the version that reads most naturally in English while sta
 		const usedVocab = masterVocabList.filter(v => normalizedContent.includes(v.original));
 		const chineseParagraphs = normalizedContent.split(/\n+/).filter(p => p.trim());
 
-		const scanForMissedTerms = (text) => {
-			const contentNormalized = text.toLowerCase().replace(/[^a-z0-9]/g, "");
+		const scanForMissedTerms = (englishText) => {
 			const missed = [];
 			const missedData = [];
 
+			const englishParas = englishText.split(/\n+/).map(p => p.trim()).filter(Boolean);
+
+			// We already calculated chineseParagraphs outside this scope
+			const canDoLineByLine = englishParas.length === chineseParagraphs.length;
+
 			usedVocab.forEach(v => {
-				const targetNormalized = v.translation.toLowerCase().replace(/[^a-z0-9]/g, "");
-				if (!contentNormalized.includes(targetNormalized)) {
-					const foundInParas = [];
-					chineseParagraphs.forEach((para, index) => {
-						if (para.includes(v.original)) foundInParas.push(index + 1);
+				// 1. Create a strict word-boundary regex
+				const escapedTerm = escapeRegex(v.translation).replace(/\s+/g, '[\\s\\-]+');
+
+				// \b checks for word boundaries, so "Shaq" won't match inside "Shaquille"
+				// (?:s|'s)? allows for plurals or possessives (e.g., "Shaq's")
+				const strictRegex = new RegExp(`\\b${escapedTerm}(?:s|'s)?\\b`, 'i');
+
+				const missedInParas = [];
+
+				if (canDoLineByLine) {
+					// 2. Precise Paragraph-by-Paragraph Check
+					chineseParagraphs.forEach((zhPara, index) => {
+						if (zhPara.includes(v.original)) {
+							const enPara = englishParas[index];
+							// If the Chinese has the term, but this exact English paragraph DOES NOT
+							if (enPara && !strictRegex.test(enPara)) {
+								missedInParas.push(index + 1);
+							}
+						}
 					});
 
-					missedData.push({ term: v.translation, original: v.original, paragraphs: foundInParas });
-					const locationStr = foundInParas.length > 0 ? ` (Para ${foundInParas.join(", ")})` : "";
-					missed.push(`"${v.translation}"${locationStr}`);
+					if (missedInParas.length > 0) {
+						missedData.push({ term: v.translation, original: v.original, paragraphs: missedInParas });
+						missed.push(`"${v.translation}" (Para ${missedInParas.join(", ")})`);
+					}
+				} else {
+					// 3. Fallback Document-Level Check (if paragraph counts drifted)
+					if (!strictRegex.test(englishText)) {
+						const foundInParas = [];
+						chineseParagraphs.forEach((para, index) => {
+							if (para.includes(v.original)) foundInParas.push(index + 1);
+						});
+						missedData.push({ term: v.translation, original: v.original, paragraphs: foundInParas });
+						const locationStr = foundInParas.length > 0 ? ` (Para ${foundInParas.join(", ")})` : "";
+						missed.push(`"${v.translation}"${locationStr}`);
+					}
 				}
 			});
 
