@@ -68,21 +68,20 @@ const postChapterToPinterest = async (req, res) => {
 			// Replace with your preferred LLM API (OpenAI, Gemini, Anthropic)
 			const llmPrompt = `
 						You are a dramatic marketing copywriter for a web novel app creating viral Pinterest hooks.
-						Summarize the following chapter text into exactly 4 sentences.
+						Summarize the following chapter text into exactly 3 sentences.
 
-						CRITICAL RULE: You MUST absolutely replace character names with web-novel marketing archetypes. You must prioritize using these exact phrases: "the male lead", "the female lead", "the toxic sister", "the villain", "the best friend", or "the rival". (e.g., Do not say "John", say "the male lead") so like Archetypes, role-based descriptors, or Epithets.
+						CRITICAL RULE: You MUST absolutely replace character names with web-novel marketing archetypes. You must prioritize using these exact phrases: "the male lead", "the female lead", "the toxic sister", "the villain", "the best friend", or "the rival" (e.g., Do not say "John", say "the male lead").
 
-						FORMATTING RULE: Output ONLY the 4 sentences as a single flowing paragraph. DO NOT include labels, numbers (like 1., 2.), or bullet points.
+						FORMATTING RULE: Output ONLY the 3 sentences as a single flowing paragraph. DO NOT include labels, numbers (like 1., 2.), or bullet points.
 
-						Structure the 4 sentences as follows:
-						Sentence 1: Opening Hook (High-impact drama setting the stakes).
-						Sentence 2: Beginning (Setup of the scene).
-						Sentence 3: Middle (The rising action or conflict).
-						Sentence 4: End (The cliffhanger or emotional peak).
+						Structure the 3 sentences as follows:
+						Sentence 1: The Hook & Setup (High-impact drama setting the scene and stakes).
+						Sentence 2: The Escalation (The rising action, conflict, or twist).
+						Sentence 3: The Cliffhanger (The emotional peak or unresolved tension).
 
 						Chapter Text: 
 						${chapter.content}
-						`;
+					`;
 
 			const llmResponse = await openai.chat.completions.create({
 				model: "deepseek/deepseek-v4-flash-0731", // or "kimi-k2.5" depending on their current endpoint names
@@ -167,7 +166,7 @@ const postChapterToPinterest = async (req, res) => {
                         align-items: center;   /* NEW: Vertically centers them */
                         gap: 15px;             /* NEW: Adds space between logo and text */
                         font-size: 32px; 
-                        color: #FFD700; 
+                        color: #fff1a1; 
                         margin-bottom: 30px; 
                         flex-shrink: 0; 
                     }
@@ -189,8 +188,6 @@ const postChapterToPinterest = async (req, res) => {
                     }
                     .footer { 
                         margin-top: 30px; 
-                        font-size: 31px; 
-                        color: #c2c2c2; 
                         border-top: 1px solid #333; 
                         padding-top: 20px; 
                         flex-shrink: 0; 
@@ -200,12 +197,12 @@ const postChapterToPinterest = async (req, res) => {
             <body>
                 <div class="book-title">
                     <img src="${APP_LOGO_BASE64}" class="app-logo" alt="App Logo" />
-                    <span>Read now on ${process.env.FRONTEND_USER_URL}/book/${book.slug}</span>
+                    <span>Novel Title - ${book.title}, Chapter ${chapter.chapterNo} - read now on Novel Angel</span>
                 </div>
                 <div class="recap-wrapper">
                     <div class="recap-text">${formattedRecapText.replace(/\n/g, '<br/>')}</div>
                 </div>
-                <div class="footer">Novel Title - ${book.title}, Chapter ${chapter.chapterNo}</div>
+                <div class="footer"></div>
             </body>
         </html>
       `;
