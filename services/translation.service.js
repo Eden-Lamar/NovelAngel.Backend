@@ -99,7 +99,7 @@ const sanitizeChineseText = (text) => {
 
 		// Remove common author note / outbound commentary blocks
 		// This targets the typical "author speaking" section at the end
-		.replace(/(?:又是一年|三年后的生日|男女主个性|字数差不多|后面白就用来存稿|正式连载|看到觉得喜欢的请收藏|么么哒|啦啦啦)[\s\S]*$/gi, '')
+
 
 		// Broader cleanup for vote / collection begging
 		.replace(/(求|请|感谢|谢谢|喜欢的话).*?(票|收藏|推荐|支持|追读|打赏|点赞|月票|订阅|收藏).*?$/gm, '')
@@ -417,24 +417,43 @@ const correctMissedVocabTerms = async (englishText, chineseParagraphs, missedTer
 
 	// --- Execute Corrections in Parallel ---
 	const correctionPromises = Array.from(paraFixMap.entries()).map(async ([targetIdx, terms]) => {
-		const paragraph = englishParagraphs[targetIdx];
-		if (!paragraph) return 0;
+		const enParagraph = englishParagraphs[targetIdx];
+		const zhParagraph = chineseParagraphs[targetIdx]; // NEW: Grab the original Chinese!
+
+		if (!enParagraph) return 0;
 
 		const termList = terms.map(t => `- "${t.original}" MUST be translated as "${t.term}"`).join('\n');
 
-		const correctionInstruction = `You are fixing a single paragraph of an already-translated English novel excerpt because it failed to use mandatory glossary terms.
+		const correctionInstruction = `You are fixing a single paragraph of a translated novel to enforce mandatory terminology.
 
-MANDATORY TERMINOLOGY (the paragraph below currently uses a different word/phrase for these):
+ORIGINAL CHINESE PARAGRAPH:
+${zhParagraph || "N/A"}
+
+CURRENT ENGLISH PARAGRAPH:
+${enParagraph}
+
+MANDATORY TERMINOLOGY TO ENFORCE:
 ${termList}
 
 Rules:
-- Rewrite the paragraph so it uses the exact mandated English term(s) above wherever the corresponding concept appears.
-- Do NOT change anything else: keep sentence structure, tone, and all other wording as close to the original as possible.
-- Output ONLY the corrected paragraph. No explanations, no quotes, no labels.`;
+- Rewrite the CURRENT ENGLISH PARAGRAPH so it uses the exact mandated English term(s) above.
+- NEVER talk to the user. Do not ask for more text. Do not explain your changes.
+- Output ONLY the newly corrected English paragraph.`;
 
 		try {
-			const corrected = await callAI(paragraph, correctionInstruction, { maxTokens: 2000, signal: abortSignal });
+			// Keep the prompt payload incredibly simple since the context is in the instruction
+			const corrected = await callAI("Fix the terminology and output only the story text.", correctionInstruction, { maxTokens: 2000, signal: abortSignal });
+
+			// NEW: The Hard-Stop Regex Shield
+			// Catches standard AI refusal/conversational phrases
+			const aiRefusalRegex = /(I need the original|Please provide|As an AI|I cannot|I apologize|Here is the corrected)/i;
+
 			if (corrected && corrected.trim()) {
+				if (aiRefusalRegex.test(corrected)) {
+					onLog("warning", `AI injection detected during vocab correction for paragraph ${targetIdx + 1}. Keeping original text to prevent corruption.`);
+					return 0; // Abort the fix, preserve the original English text
+				}
+
 				englishParagraphs[targetIdx] = corrected.trim();
 				return 1;
 			}
@@ -981,7 +1000,7 @@ If no catastrophic errors jump out, immediately output the JSON.
 
 CRITICAL RULES:
 - DO NOT rewrite the text.
-- Count only MAJOR problems: broken sentences, garbled syntax, or nonsensical phrasing.
+- Count only MAJOR problems: broken sentences, garbled syntax, nonsensical phrasing, OR AI conversational injections (e.g., "Here is the translation", "I need more context", "As an AI").
 - Output ONLY a valid JSON object.
 
 Format exactly like this:
