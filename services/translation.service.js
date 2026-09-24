@@ -234,6 +234,13 @@ const removeNearDuplicateParagraphs = (text) => {
 };
 
 
+const safeParseJson = (raw) => {
+	if (!raw) return null;
+	const match = raw.match(/\{[\s\S]*\}/); // Extracts everything from { to }
+	if (!match) return null;
+	try { return JSON.parse(match[0]); } catch { return null; }
+};
+
 // // --- 2. NEW: DYNAMIC SEMANTIC CHUNKING ---
 // const chunkText = (text, maxChunkSize = 2500) => {
 // 	// Split by double newline or single newline to isolate paragraphs
@@ -522,17 +529,28 @@ const translateChapter = async (chineseTitle, chineseContent, bookId, bookTitle,
 		// Default to throwing an error on truncation, but allow bypassing it
 		const throwOnLength = options.throwOnLength !== undefined ? options.throwOnLength : true;
 
-		const response = await openai.chat.completions.create({
+		// 1. Build the base payload
+		const apiPayload = {
 			model: PRIMARY_MODEL,
 			temperature: 0.1,
 			max_tokens: maxTokens,
 			messages: [
 				{ role: "system", content: systemInstruction },
 				{ role: "user", content: prompt }
-			],
-			reasoning: { effort: "low" }
-		}, {
-			// Pass the signal into the OpenAI SDK's request options
+			]
+		};
+
+		// 2. Only attach the reasoning engine if we don't explicitly disable it
+		if (options.reasoning !== false) {
+			apiPayload.reasoning = { effort: "low" };
+		}
+
+		// 2. NEW: Native JSON Mode enforcement
+		if (options.jsonMode) {
+			apiPayload.response_format = { type: "json_object" };
+		}
+
+		const response = await openai.chat.completions.create(apiPayload, {
 			signal: options.signal
 		});
 
@@ -598,7 +616,7 @@ ${excludeText}`;
 			const extractionPrompt = `TEXT TO SCAN:\n${normalizedContent.slice(0, 2000)}`;
 			// Send just the first 2000 characters to cheaply identify the core entities of the chapter
 			// Use maxTokens: 1000 (plenty for a 2000 char snippet) and allow truncation
-			const newVocabRaw = await callAI(extractionPrompt, extractionInstruction, { maxTokens: 4000, throwOnLength: false, signal: abortSignal });
+			const newVocabRaw = await callAI(extractionPrompt, extractionInstruction, { maxTokens: 4000, throwOnLength: false, signal: abortSignal, reasoning: false });
 
 			// 2. DEBUG LOG: Let's see exactly what DeepSeek is returning
 			// onLog("info", `--- RAW PRE-FLIGHT AI OUTPUT ---\n${newVocabRaw}\n------------------------------`);
@@ -835,6 +853,8 @@ When in doubt, choose the version that reads most naturally in English while sta
 			onLog("warning", `🔧 Fixed ${corrections.length} leaked Chinese terms post-translation.`);
 		}
 
+		finalCleanedContent = enforcedContent;
+
 
 		// --- STEP 4: THE QUALITY SCORING ENGINE ---
 		onLog("info", "Calculating Translation Quality Score...");
@@ -947,6 +967,58 @@ When in doubt, choose the version that reads most naturally in English while sta
 			const penalty = Math.min(missedTerms.length * 3, 15);
 			qualityScore -= penalty;
 			scoreReasons.push(`Glossary Penalty (-${penalty}): Missed ${missedTerms.length} term(s) → ${missedTerms.join(", ")} from the vocabulary database.`);
+		}
+
+		// --- 5. Grammar & Syntax Check (AI-Powered) ---
+		onLog("info", "Running Grammar & Syntax analysis...");
+		try {
+			const grammarInstruction = `You are an expert English copyeditor reviewing a translated web novel.
+
+!!! URGENT DIRECTIVE FOR YOUR INTERNAL REASONING !!!
+DO NOT evaluate this text line-by-line in your thinking process.
+Keep your internal thinking to LESS THAN 50 WORDS total. Skim quickly.
+If no catastrophic errors jump out, immediately output the JSON.
+
+CRITICAL RULES:
+- DO NOT rewrite the text.
+- Count only MAJOR problems: broken sentences, garbled syntax, or nonsensical phrasing.
+- Output ONLY a valid JSON object.
+
+Format exactly like this:
+{"majorErrorsCount": 0, "examples": ["brief snippet of error 1", "brief snippet of error 2"]}
+If no major errors are found, output exactly: {"majorErrorsCount": 0, "examples": []}`;
+
+			// Pass the final, fully-corrected content to the AI for grading
+			const grammarResultRaw = await callAI(finalCleanedContent, grammarInstruction, {
+				maxTokens: 2000,
+				signal: abortSignal,
+				jsonMode: true
+			});
+
+			// Use Claude's bulletproof parser
+			const grammarResult = safeParseJson(grammarResultRaw);
+
+			if (!grammarResult) {
+				onLog("warning", "Grammar check skipped: no usable JSON output found.");
+			} else {
+				onLog("info", `Grammar check complete: Found ${grammarResult.majorErrorsCount} major errors.`);
+
+				if (grammarResult.majorErrorsCount > 0) {
+					const penalty = Math.min(grammarResult.majorErrorsCount, 8) * 2;
+					qualityScore -= penalty;
+
+					const exampleText = grammarResult.examples && grammarResult.examples[0]
+						? ` (e.g., "${grammarResult.examples[0]}")`
+						: "";
+
+					scoreReasons.push(`Grammar Penalty (-${penalty}): Detected ${grammarResult.majorErrorsCount} major syntax or grammatical issue(s)${exampleText}.`);
+				} else {
+					scoreReasons.push("Grammar & Syntax Check: Passed flawlessly (0 major errors).");
+				}
+			}
+		} catch (e) {
+			if (e.name === 'AbortError' || e.constructor.name === 'APIUserAbortError' || /aborted/i.test(e.message)) throw e;
+			onLog("warning", `Grammar check skipped due to API error: ${e.message}`);
 		}
 
 		qualityScore = Math.max(0, Math.min(100, Math.round(qualityScore)));
