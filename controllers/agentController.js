@@ -1,3 +1,4 @@
+const { setMaxListeners } = require('events');
 const Book = require("../models/Book");
 const Chapter = require("../models/Chapter");
 const Vocab = require("../models/Vocab");
@@ -36,6 +37,10 @@ const previewTranslation = async (req, res) => {
 
 	// 2. Create the AbortController and store it in our global Map
 	const serverAbortController = new AbortController();
+
+	// NEW: Raise the listener limit to handle our massive parallel Promise.all() arrays
+	setMaxListeners(50, serverAbortController.signal);
+
 	activeTranslations.set(sessionKey, serverAbortController);
 
 	try {
