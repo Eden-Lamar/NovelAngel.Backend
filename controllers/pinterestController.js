@@ -66,23 +66,23 @@ const postChapterToPinterest = async (req, res) => {
 
 			// 3. Call LLM to generate the 4-sentence formula
 			// Replace with your preferred LLM API (OpenAI, Gemini, Anthropic)
-			const llmPrompt = `
-						You are a dramatic marketing copywriter for a web novel app creating viral Pinterest hooks.
-						Summarize the following chapter text into exactly 3 sentences.
+			const llmPrompt = `You are a dramatic marketing copywriter for a web novel app creating viral Pinterest hooks.
+        Summarize the following chapter text into exactly 3 sentences.
 
-						CRITICAL RULE: You MUST absolutely replace character names with web-novel marketing archetypes. 
-						- Prioritize phrases like: "the male lead", "the female lead", "the villain", "the rival", or "the best friend". 
-						- STRICT CONSTRAINT: Do NOT use familial terms like "the toxic sister", "the uncle", or "the stepmother" UNLESS the characters are actually related in the text.
+        CRITICAL RULE: You MUST replace character names with accurate web-novel marketing archetypes based strictly on their actual role in this specific chapter.
+        - Dynamic Archetypes: Analyze the character's behavior. Use precise tropes like "the scheming elder", "the loyal subordinate", "the cannon fodder bully", "the cold CEO", or "the white lotus" depending on what they actually do.
+        - Protagonist Protection: Reserve "the male lead" and "the female lead" ONLY for the actual main protagonists. Do not apply these to side characters or random men/women.
+        - Relationship Accuracy: Do NOT use familial terms (e.g., "the toxic sister", "the abusive father") unless the text explicitly confirms they are related.
 
-						FORMATTING RULE: Output ONLY the 3 sentences as a single flowing paragraph. DO NOT include labels, numbers (like 1., 2.), or bullet points.
+        FORMATTING RULE: Output ONLY the 3 sentences as a single flowing paragraph. DO NOT include labels, numbers (like 1., 2.), or bullet points.
 
-						Structure the 3 sentences as follows:
-						Sentence 1: The Hook & Setup (High-impact drama setting the scene and stakes).
-						Sentence 2: The Escalation (The rising action, conflict, or twist).
-						Sentence 3: The Cliffhanger (The emotional peak or unresolved tension).
+        Structure the 3 sentences as follows:
+        Sentence 1: The Hook & Setup (High-impact drama setting the scene and stakes).
+        Sentence 2: The Escalation (The rising action, conflict, or twist).
+        Sentence 3: The Cliffhanger (The emotional peak or unresolved tension).
 
-						Chapter Text: 
-						${chapter.content}
+        Chapter Text: 
+        ${chapter.content}
 					`;
 
 			const llmResponse = await openai.chat.completions.create({
