@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const { registerUser, loginUser, getProfile, updateProfile, getUserBookmarks, getReadingHistory, getContinueReading, getAllCustomers } = require('../../controllers/userController');
+const { registerUser, loginUser, getProfile, updateProfile, getUserBookmarks, getReadingHistory, getContinueReading, getAllCustomers, sendManualEmail } = require('../../controllers/userController');
 const { protect, admin } = require('../../middlewares/authMiddleware');
 const { generateToken } = require('../../utils/helpFunction');
 const passport = require('passport');
@@ -41,6 +41,7 @@ router.get('/bookmarks', protect, getUserBookmarks);    // Get the list of bookm
 router.get('/history', protect, getReadingHistory);    // Get a user's reading history
 router.get('/continue-reading', protect, getContinueReading);    // Get a user list of book and chapters they read last
 router.get('/customers', protect, admin, getAllCustomers);    // Get all customers (users with role 'user')
+router.post('/send-email', protect, admin, sendManualEmail); // Send manual email to a user (admin only)
 
 
 module.exports = router;
