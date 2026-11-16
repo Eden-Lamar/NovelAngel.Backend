@@ -4,6 +4,7 @@ const Bookmark = require('../models/Bookmark');
 const { registerValidation, loginValidation } = require("../utils/validate");
 const { generateToken } = require("../utils/helpFunction")
 const { uploadImage, deleteImage } = require("../utils/s3")
+const { sendEmail } = require('../utils/emailService');
 
 // @description: Register Users 
 // @route POST /api/v1/user/register
@@ -43,6 +44,17 @@ const registerUser = async (req, res) => {
 		});
 
 		const { password: _, ...rest } = user._doc; // Exclude password from the response
+
+		// 🔥 Send Automatic Welcome Email (Fire and forget, don't await so it doesn't block the response)
+		sendEmail({
+			to: user.email,
+			subject: "Welcome to our app! 🎉",
+			title: "Welcome Aboard!",
+			body: `<p>Hi ${user.username},</p>
+							<p>We're thrilled to have you here. As a special welcome gift, we've automatically credited your account with <b>30 free coins</b> to start unlocking chapters immediately!</p>`,
+			ctaText: "Start Reading",
+			ctaUrl: `${process.env.FRONTEND_USER_URL}/explore`
+		});
 
 		res.status(201).json({
 			status: "success",
@@ -398,6 +410,45 @@ const getAllCustomers = async (req, res) => {
 	}
 };
 
+
+// 2. Add this NEW function for Manual/Admin emails
+// @description: Send Manual Email to Users
+// @route POST /api/v1/user/send-email
+// @access private (Admin only)
+const sendManualEmail = async (req, res) => {
+	try {
+		const { targetEmail, subject, title, body, ctaText, ctaUrl } = req.body;
+
+		let recipients = [];
+
+		// If targetEmail is "all", fetch all normal users. Otherwise, send to the specific email.
+		if (targetEmail === 'all') {
+			const users = await User.find({ role: 'user' }).select('email');
+			recipients = users.map(u => u.email);
+		} else {
+			recipients = [targetEmail];
+		}
+
+		if (recipients.length === 0) {
+			return res.status(404).json({ status: "fail", message: "No users found to email." });
+		}
+
+		// Send emails (using Promise.all for parallel sending)
+		const emailPromises = recipients.map(email =>
+			sendEmail({ to: email, subject, title, body, ctaText, ctaUrl })
+		);
+
+		await Promise.all(emailPromises);
+
+		res.status(200).json({
+			status: "success",
+			message: `Email successfully sent to ${recipients.length} user(s).`
+		});
+	} catch (error) {
+		res.status(500).json({ status: "fail", error: error.message });
+	}
+};
+
 module.exports = {
 	registerUser,
 	loginUser,
@@ -406,5 +457,6 @@ module.exports = {
 	getUserBookmarks,
 	getReadingHistory,
 	getContinueReading,
-	getAllCustomers
+	getAllCustomers,
+	sendManualEmail
 };
